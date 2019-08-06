@@ -389,13 +389,32 @@ def call_conservative_positions(div_freq_file, cons_pos_file,
         f.write(">{0}\n".format(header))
         f.write(",".join(map(str, sorted(cons_pos))))
 
+def read_conservative_positions(positions_file):
+    """
+    Reads conservative positions file into list
+    """
+    header = ""
+    positions = []
+    try:
+        with open(positions_file, "r") as f:
+            for line_id, line in enumerate(f):
+                line = line.strip()
+                if line_id == 0 and line.startswith(">") and line:
+                    header = line[1:]
+                elif line:
+                    pos_parts = line.split(",")
+                    positions = map(int, pos_parts)
+    except IOError as e:
+        raise PositionIOError(e)
+    return header, positions
+
 class PositionIOError(Exception):
     pass
 
 
 def read_positions(positions_file):
     """
-    Reads positions file into list
+    Reads positions file into dictionary of lists
     """
     headers = {"total":"", "sub":"", "ins":"", "del":""}
     positions = {"total":[], "sub":[], "ins":[], "del":[]}

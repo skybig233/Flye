@@ -14,6 +14,7 @@ from itertools import combinations
 import copy
 import multiprocessing, signal
 from sklearn.cluster import AgglomerativeClustering
+import numpy as np
 
 import flye.polishing.alignment as flye_aln
 from flye.polishing.alignment import Alignment
@@ -26,85 +27,148 @@ import flye.trestle.trestle_config as trestle_config
 
 logger = logging.getLogger()
 
-def test_edge_lengths(args, phasing_dir, uniques_dict):
+
+def classify_haploids(args, hap_dir, uniques_dict, path_ids, summary_file, hap_seq_file):
+    print "Start haploid"
     SUB_THRESH = trestle_config.vals["sub_thresh"]
     DEL_THRESH = trestle_config.vals["del_thresh"]
     INS_THRESH = trestle_config.vals["ins_thresh"]
     MIN_ALN_RATE = trestle_config.vals["min_aln_rate"]
-    NUM_POL_ITERS = trestle_config.vals["num_pol_iters"]
-    ORIENT_CONFIG = trestle_config.vals["orientations_to_run"]
-    PHASE_MIN_LONGEST_DIV = trestle_config.vals["phase_min_longest_div"]
-    all_file_names = define_file_names()
-    (pol_dir_names, initial_file_names,
-     pre_file_names, div_file_names, aln_names,
-     middle_file_names, output_file_names) = all_file_names
+    #dict from each edge to all other edges in bulge
+    bulge_dict = find_bulge_edges(uniques_dict, path_ids)
+    #polish bool (can try not polishing)
+    polish_on = True
+    print "Got here after bulge_dict"
+    initial_file_names, div_file_names = define_file_names()
     (edge_label, template_name, initial_reads_name, 
-     left_reads_name, right_reads_name) = initial_file_names
+     left_reads_name, right_reads_name, 
+     reads_template_aln_name) = initial_file_names    
+    div_freq_name, div_pos_name, div_summ_name, cons_pos_name = div_file_names
+    print "got here after file_names"
+    if polish_on:
+        NUM_POL_ITERS = trestle_config.vals["num_pol_iters"]
+        pol_temp_name = "Polishing.Template"
     
+    reads_dict = get_all_read_seqs(args)
+    print "reads dict done"
+    for edge in sorted(uniques_dict, reverse=True):
+        print "Edge {0}".format(edge)
+        dirs = init_seq_dirs_and_files(args, hap_dir, initial_file_names, 
+                                       uniques_dict, edge, reads_dict)
+        edge_dir, initial_reads_path, template_path = dirs
+        
+        current_template = template_path
+        if polish_on:
+            #Polish template
+            logger.debug("Polishing templates")
+            pol_temp_dir = os.path.join(edge_dir, pol_temp_name)
+            if not os.path.isdir(pol_temp_dir):
+                os.mkdir(pol_temp_dir)
+            polished_template, _stats = \
+                pol.polish(template_path, [initial_reads_path], pol_temp_dir, 
+                           NUM_POL_ITERS, args.threads, args.platform, 
+                           output_progress=False)
+        
+            if not os.path.getsize(polished_template):
+                logger.debug("Polishing failed")
+            else:
+                current_template = polished_template
+        print "polishing done"
+        #3. Find divergent positions
+        logger.debug("Estimating divergence")
+        frequency_path = os.path.join(edge_dir, div_freq_name)
+        position_path = os.path.join(edge_dir, div_pos_name)
+        summary_path = os.path.join(edge_dir, div_summ_name)
+        cons_pos_path = os.path.join(edge_dir, cons_pos_name)
+        
+        #logger.info("running Minimap2")
+        alignment_file = os.path.join(edge_dir, reads_template_aln_name)
+        template_len = 0.0
+        if os.path.getsize(current_template):
+            flye_aln.make_alignment(current_template, [initial_reads_path], 
+                       args.threads, edge_dir, args.platform, 
+                       alignment_file, reference_mode=True, sam_output=True)
+            template_info = flye_aln.get_contigs_info(current_template)
+            template_len = template_info[str(edge)].length
+
+        logger.debug("Finding tentative divergence positions")
+        num_pos = 0
+        div_rate = 0.0
+        if os.path.getsize(current_template):
+            div.find_divergence(alignment_file, current_template, 
+                                template_info, frequency_path, position_path, 
+                                summary_path, MIN_ALN_RATE, 
+                                args.platform, args.threads,
+                                SUB_THRESH, DEL_THRESH, INS_THRESH)
+        
+            pos_headers, pos = div.read_positions(position_path)
+            num_pos = len(pos["total"])
+            div_rate = num_pos / float(template_len)
+            logger.debug("Edge {0}: divergence rate = {1} pos / {2} bp = {3}".format(
+                                edge, num_pos, template_len, div_rate))
+        print "Finished divergence"
+        num_cons_pos = 0
+        cons_div_rate = 0.0
+        if os.path.getsize(frequency_path):
+            cons_sub_thresh = 0.2
+            cons_del_thresh = 0.2
+            cons_ins_thresh = 5.0
+            cov = find_coverage(frequency_path)
+            div.call_conservative_positions(frequency_path, cons_pos_path, 
+                                            cons_sub_thresh, cons_del_thresh, 
+                                            cons_ins_thresh)
+
+            cp_head, cons_pos = div.read_conservative_positions(cons_pos_path)
+            num_cons_pos = len(cons_pos)
+            cons_div_rate = len(cons_pos) / float(template_len)
+            cov_cons_str = " ".join(["Edge {0}:".format(edge), 
+                    "avg aligned cov = {0:.2f}".format(cov),
+                    "conservative div rate = {0} pos / {1} bp = {2}".format(
+                    num_cons_pos, template_len, cons_div_rate)])
+            logger.debug(cov_cons_str)
+        print "got conservative positions"
+        info = uniques_dict[edge]
+        num_in = len(info.in_reads)
+        num_out = len(info.out_reads)
+        logger.debug("In edges:\t{0}\n".format(num_in))
+        for in_edge in info.in_reads:
+            logger.debug("{0}:{1}\n".format(in_edge, info.in_reads[in_edge]))
+        logger.debug("Out edges:\t{0}\n".format(num_out))
+        for out_edge in info.out_reads:
+            logger.debug("{0}:{1}\n".format(out_edge, info.out_reads[out_edge]))
+        logger.debug("Bulge edges:\t{0}\n".format(len(bulge_dict[edge])))
+        print "got to end"
+
+def get_all_read_seqs(args):
     reads_dict = {}
     for read_file in args.reads:
         reads_dict.update(fp.read_sequence_dict(read_file))
     if not reads_dict:
         raise ProcessingException("No reads found from {0}".format(args.reads))
+    return reads_dict
+
+def init_seq_dirs_and_files(args,hap_dir, initial_file_names, uniques_dict, 
+                            edge, reads_dict):
+    (edge_label, template_name, initial_reads_name, 
+     left_reads_name, right_reads_name, 
+     reads_template_aln_name) = initial_file_names
     
-    longest_edge = None
-    longest_edge_len = 0
-    for edge in sorted(uniques_dict, reverse=True):
-        #Checks presence of reverse strand
-        #One run processes both forward and reverse strand of edge
-                
-        if edge <= 0:
-            continue
-        
-        valid_edge = True
-        if -edge not in uniques_dict:
-            logger.debug("Edge {0} missing reverse strand".format(edge))
-            valid_edge = False
-        if not valid_edge:
-            continue
-        
-        template_seq = uniques_dict[edge].sequences["template"]
-        if len(template_seq) > longest_edge_len:
-            longest_edge_len = len(template_seq)
-            longest_edge = edge
-    
-    haploid = True
-    if not longest_edge:
-        return True
-    
-    logger.debug("Testing divergence on longest edge {0}".format(longest_edge))
-    
-    edge = longest_edge
     #Make edge dir
-    edge_dir = os.path.join(phasing_dir, edge_label.format(edge))
+    edge_dir = os.path.join(hap_dir, edge_label.format(edge))
     if not os.path.isdir(edge_dir):
         os.mkdir(edge_dir)
     
-    #Only run the forward strand for the test if ORIENT_CONFIG = "both"
-    curr_label, curr_edge = None, None
-    if ORIENT_CONFIG == "forward":
-        curr_label, curr_edge = ("forward", edge)
-    elif ORIENT_CONFIG == "reverse":
-        curr_label, curr_edge = ("reverse", -edge)
-    elif ORIENT_CONFIG == "both":
-        curr_label, curr_edge = ("forward", edge)
-    orient_path = os.path.join(edge_dir, curr_label)
-    if not os.path.isdir(orient_path):
-        os.mkdir(orient_path)
-    template_path = os.path.join(orient_path, template_name)
-    initial_reads_path = os.path.join(orient_path, initial_reads_name)
-    all_reads_list = uniques_dict[curr_edge].all_reads
+    template_path = os.path.join(edge_dir, template_name)
+    initial_reads_path = os.path.join(edge_dir, initial_reads_name)
+    all_reads_list = uniques_dict[edge].all_reads
     
     template_dict = {}
     initial_reads_dict = {}
     
-    template_seq = uniques_dict[curr_edge].sequences["template"]
-    #if curr_label == "reverse":
-    #    template_seq = fp.reverse_complement(graph_dict[edge])
-    template_dict[curr_edge] = template_seq
+    template_seq = uniques_dict[edge].sequences["template"]
+    template_dict[edge] = template_seq
     
     #rev_comp of read will be written if the header is -h
-    
     for header in all_reads_list:
         if (not header) or (header[0] != '+' and header[0] != '-'):
             raise ProcessingException(
@@ -125,57 +189,70 @@ def test_edge_lengths(args, phasing_dir, uniques_dict):
         fp.write_fasta_dict(initial_reads_dict, initial_reads_path)
     
     if not template_dict:
-        raise ProcessingException("No template {0} found".format(
-                                        curr_edge))
+        raise ProcessingException("No template {0} found".format(edge))
     if not initial_reads_dict:
-        raise ProcessingException("No repeat reads {0} found".format(
-                                        curr_edge))
+        raise ProcessingException("No repeat reads {0} found".format(edge))
     
+    return edge_dir, initial_reads_path, template_path
 
-    pol_temp_name, pol_cons_name = pol_dir_names
-    div_freq_name, div_pos_name, div_summ_name = div_file_names
-    (reads_template_aln_name, cons_temp_aln_name,
-     cut_cons_temp_aln_name, reads_cons_aln_name) = aln_names
-        
-    #Polish template
-    logger.debug("Polishing templates")
-    pol_temp_dir = os.path.join(orient_path, pol_temp_name)
-    if not os.path.isdir(pol_temp_dir):
-        os.mkdir(pol_temp_dir)
-    polished_template, _stats = \
-        pol.polish(template_path, [initial_reads_path], pol_temp_dir, NUM_POL_ITERS,
-                   args.threads, args.platform, output_progress=False)
+def find_coverage(frequency_file):
+    coverage = 0.0
+    if os.path.isfile(frequency_file):
+        header, freqs = div.read_frequency_path(frequency_file)
+        cov_ind = header.index("Cov")
+        all_covs = [f[cov_ind] for f in freqs]
+        coverage = np.mean(all_covs)
+        #print min(all_covs), np.mean(all_covs), max(all_covs)
+    return coverage
 
-    if not os.path.getsize(polished_template):
-        return True
+def find_bulge_edges(uniques_dict, path_ids):
+    bulge_dict = {}
+    for unique_id in uniques_dict:
+        info = uniques_dict[unique_id]
+        if unique_id in bulge_dict:
+            continue
+        bulge_dict[unique_id] = set()
+        for in_edge in info.in_reads:
+            print "in_edge", in_edge, in_edge in uniques_dict
+            
+            if in_edge in path_ids and path_ids[in_edge] in uniques_dict:
+                print "path_id", path_ids[in_edge], path_ids[in_edge] in uniques_dict
+                for bulge_edge in uniques_dict[path_ids[in_edge]].out_reads:
+                    bulge_dict[unique_id].add(bulge_edge)
+            else:
+                print "in_edge", in_edge, in_edge in path_ids
+        for out_edge in info.out_reads:
+            print "out_edge", out_edge, out_edge in uniques_dict
+            
+            if out_edge in path_ids and path_ids[out_edge] in uniques_dict:
+                print "path_id", path_ids[out_edge], path_ids[out_edge] in uniques_dict
+                for bulge_edge in uniques_dict[path_ids[out_edge]].in_reads:
+                    bulge_dict[unique_id].add(bulge_edge)
+            else:
+                print "out_edge", out_edge, out_edge in path_ids
+    return bulge_dict
+
+def define_file_names():
+    #Defining directory and file names for haploidy output
     
-    #3. Find divergent positions
-    logger.debug("Estimating divergence")
-    frequency_path = os.path.join(orient_path, div_freq_name)
-    position_path = os.path.join(orient_path, div_pos_name)
-    summary_path = os.path.join(orient_path, div_summ_name)
+    edge_label = "edge_{0}"
+    template_name = "template.fasta"
+    initial_reads_name = "initial_reads.fasta"
+    left_reads_name = "left_reads.fasta"
+    right_reads_name = "right_reads.fasta"
+    reads_template_aln_name = "reads.vs.template.minimap.sam"
+    initial_file_names = (edge_label, template_name, initial_reads_name, 
+                          left_reads_name, right_reads_name, 
+                          reads_template_aln_name)
     
-    #logger.info("running Minimap2")
-    alignment_file = os.path.join(orient_path, reads_template_aln_name)
-    template_len = 0.0
-    if os.path.getsize(polished_template):
-        flye_aln.make_alignment(polished_template, [initial_reads_path], 
-                   args.threads, orient_path, args.platform, 
-                   alignment_file, reference_mode=True, sam_output=True)
-        template_info = flye_aln.get_contigs_info(polished_template)
-        template_len = template_info[str(edge)].length
-    read_endpoints = find_read_endpoints(alignment_file, polished_template)
-    read_endpoint_path = os.path.join(orient_path, "read_align_file.txt")
-    with open(read_endpoint_path, "w") as f:
-        count = 0
-        f.write("{0}\t{1}\t{2}\t{3}\t{4}\n".format(
-            "id", "start", "end", "length", "header"))
-        for read_header in sorted(read_endpoints, key=read_endpoints.get):
-            start, end = read_endpoints[read_header]
-            f.write("{0}\t{1}\t{2}\t{3}\t{4}\n".format(
-                count, start, end, end - start, read_header))
-            count += 1
+    div_freq_name = "divergence_frequencies.txt"
+    div_pos_name = "divergent_positions.txt"
+    div_summ_name = "divergence_summary.txt"
+    cons_pos_name = "conservative_divergent_positions.txt"
+    div_file_names = div_freq_name, div_pos_name, div_summ_name, cons_pos_name
 
+    return initial_file_names, div_file_names
+'''
 def test_divergence(args, phasing_dir, uniques_dict):
     SUB_THRESH = trestle_config.vals["sub_thresh"]
     DEL_THRESH = trestle_config.vals["del_thresh"]
@@ -538,7 +615,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         phased_edge_path = os.path.join(orient_dir, phased_edge_name)
         res_vs_res = os.path.join(orient_dir, res_vs_res_name)
         
-        '''#5. Re-align reads to extended and initialize partitioning 0
+        """#5. Re-align reads to extended and initialize partitioning 0
         logger.debug("Checking initial set of phased reads")
         for side in side_labels:
             for edge_id in repeat_edges[rep][side]:
@@ -554,7 +631,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
             init_partitioning(repeat_edges[rep][side], 
                               side, pre_partitioning.format(side), 
                               pre_read_align, polished_extended, 
-                              partitioning.format(zero_it, side))'''
+                              partitioning.format(zero_it, side))"""
         
         #5. Get initial set of read partitions
         #given the alignment of all reads against the genome,
@@ -822,7 +899,7 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
                                                 n_clusters=2, 
                                                 linkage='average')
                 model = clustering.fit(distances)
-                #print model.labels_
+                print model.labels_
                 labels = model.labels_
             cluster_one = []
             cluster_two = []
@@ -978,12 +1055,12 @@ def define_file_names():
                       middle_file_names, output_file_names)
     return all_file_names
 
-
+'''
 #Process Repeats functions
 class ProcessingException(Exception):
     pass
 
-
+'''
 def process_repeats(reads, uniques_dict, work_dir, initial_file_names):
     """Generates unique dirs and files given reads, uniques_dict and
     graph_edges files."""
@@ -1012,7 +1089,7 @@ def process_repeats(reads, uniques_dict, work_dir, initial_file_names):
         
     edge_list = []
     all_edge_headers = {}
-    for edge in sorted(uniques_dict, reverse=False):
+    for edge in sorted(uniques_dict, reverse=True):
         #Checks presence of reverse strand
         #One run processes both forward and reverse strand of edge
                 
@@ -1332,14 +1409,14 @@ def _find_consensus_endpoint(cutpoint, aligns, side, win_bool):
     consensus_endpoint = -1
     #first try collapsing
     coll_aln = _collapse_cons_aln(aligns)
-    #print "Here z", cutpoint, win_bool, coll_aln.trg_end
+    print "Here z", cutpoint, win_bool, coll_aln.trg_end
     if cutpoint >= coll_aln.trg_start and cutpoint < coll_aln.trg_end:
         trg_aln, aln_trg = _index_mapping(coll_aln.trg_seq)
         qry_aln, aln_qry = _index_mapping(coll_aln.qry_seq)
         cutpoint_minus_start = cutpoint - coll_aln.trg_start
-        #print "Here a", cutpoint_minus_start, len(trg_aln)
+        print "Here a", cutpoint_minus_start, len(trg_aln)
         aln_ind = trg_aln[cutpoint_minus_start]
-        #print "Here b", aln_ind, len(aln_qry)
+        print "Here b", aln_ind, len(aln_qry)
         qry_ind = aln_qry[aln_ind]
         consensus_endpoint = qry_ind + coll_aln.qry_start
     elif cutpoint == coll_aln.trg_end:
@@ -3044,3 +3121,4 @@ def _mean(lst):
     if not lst:
         return 0
     return float(sum(lst)) / len(lst)
+'''
