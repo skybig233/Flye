@@ -24,48 +24,27 @@ def read_sequence_dict(filename):
     """
     Reads Fasta/q file (could be gzip'ed) into a dictionary
     """
-    try:
-        seq_dict = {}
-        gzipped, fastq = _is_fastq(filename)
-
-        if not gzipped:
-            handle = open(filename, "r")
-        else:
-            handle = os.popen("zcat {0}".format(filename))
-            #gz = gzip.open(filename, "rb")
-            #handle = io.BufferedReader(gz)
-
-        if fastq:
-            for hdr, seq, qual in _read_fastq(handle):
-                if not _validate_seq(seq):
-                    raise FastaError("Invalid char while reading {0}"
-                                     .format(filename))
-                seq_dict[hdr] = to_acgt(seq)
-        else:
-            for hdr, seq in _read_fasta(handle):
-                if not _validate_seq(seq):
-                    raise FastaError("Invalid char while reading {0}"
-                                     .format(filename))
-                seq_dict[hdr] = to_acgt(seq)
-
-        return seq_dict
-
-    except IOError as e:
-        raise FastaError(e)
+    seq_dict = {}
+    for hdr, seq in stream_sequence(filename):
+        seq_dict[hdr] = seq
+    return seq_dict
 
 
 def read_sequence_lengths(filename):
-    """
-    Reads length of Fasta/q sequences (could be gzip'ed) into a dictionary
-    """
+    seq_dict = {}
+    for hdr, seq in stream_sequence(filename):
+        seq_dict[hdr] = len(seq)
+    return seq_dict
+
+
+def stream_sequence(filename):
     try:
-        length_dict = {}
         gzipped, fastq = _is_fastq(filename)
 
         if not gzipped:
             handle = open(filename, "r")
         else:
-            handle = os.popen("zcat {0}".format(filename))
+            handle = os.popen("gunzip -c {0}".format(filename))
             #gz = gzip.open(filename, "rb")
             #handle = io.BufferedReader(gz)
 
@@ -74,15 +53,13 @@ def read_sequence_lengths(filename):
                 if not _validate_seq(seq):
                     raise FastaError("Invalid char while reading {0}"
                                      .format(filename))
-                length_dict[hdr] = len(seq)
+                yield hdr, to_acgt(seq)
         else:
             for hdr, seq in _read_fasta(handle):
                 if not _validate_seq(seq):
                     raise FastaError("Invalid char while reading {0}"
                                      .format(filename))
-                length_dict[hdr] = len(seq)
-
-        return length_dict
+                yield hdr, to_acgt(seq)
 
     except IOError as e:
         raise FastaError(e)
@@ -120,7 +97,7 @@ def _read_fasta(file_handle):
             if header:
                 yield header, "".join(seq)
                 seq = []
-            header = line[1:].split(" ")[0]
+            header = line[1:].split()[0]
         else:
             seq.append(line)
 
@@ -134,22 +111,24 @@ def _read_fastq(file_handle):
     header = None
     state_counter = 0
 
-    for line in file_handle:
+    for no, line in enumerate(file_handle):
         line = line.strip()
         if not line:
             continue
 
         if state_counter == 0:
             if line[0] != "@":
-                raise FastaError("Fastq format error")
-            header = line[1:].split(" ")[0]
+                raise FastaError("Fastq format error: {0} at line {1}"
+                                    .format(file_handle.name, no))
+            header = line[1:].split()[0]
 
         if state_counter == 1:
             seq = line
 
         if state_counter == 2:
             if line[0] != "+":
-                raise FastaError("Fastq format error")
+                raise FastaError("Fastq format error: {0} at line {1}"
+                                    .format(file_handle.name, no))
 
         if state_counter == 3:
             qual = line

@@ -14,6 +14,7 @@ void ContigExtender::generateUnbranchingPaths()
 	_edgeToPath.clear();
 	for (auto& path : _unbranchingPaths)
 	{
+		path.prefix = "edge_";
 		if (path.id.strand())
 		{
 			Logger::get().debug() << "UPath " << path.id.signedId() 
@@ -236,6 +237,11 @@ void ContigExtender::generateContigs()
 		}
 	}
 
+	for (auto& ctg : _contigs)
+	{
+		ctg.graphEdges.prefix = "contig_";
+	}
+
 	Logger::get().debug() << "Covered " << numCovered << " repetitive contigs";
 	Logger::get().info() << "Generated " << _contigs.size() << " contigs";
 }
@@ -280,7 +286,7 @@ void ContigExtender::outputStatsTable(const std::string& filename)
 	std::ofstream fout(filename);
 	if (!fout) throw std::runtime_error("Can't write " + filename);
 
-	fout << "seq_name\tlength\tcoverage\tcircular\trepeat"
+	fout << "#seq_name\tlength\tcoverage\tcircular\trepeat"
 		<< "\tmult\ttelomere\tgraph_path\n";
 
 	char YES_NO[] = {'-', '+'};
@@ -372,6 +378,7 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 				else if (!adjEdge->isRepetitive())
 				{
 					reachableUnique.insert(adjEdge);
+					if (reachableUnique.size() > 1) return reachableUnique;
 				}
 			}
 		}
@@ -392,14 +399,16 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 			edge->edgeId != outEdge->edgeId.rc() &&
 			abs(edge->edgeId.signedId()) < abs(outEdge->edgeId.signedId()))
 		{
-			UnbranchingPath* leftCtg = this->asUpaths({edge}).front();
-			UnbranchingPath* rightCtg = this->asUpaths({outEdge}).front();
-			if (leftCtg != rightCtg)
+			UnbranchingPath leftCtg = *this->asUpaths({edge}).front();
+			UnbranchingPath rightCtg = *this->asUpaths({outEdge}).front();
+			if (leftCtg.id != rightCtg.id)
 			{
-				fout << leftCtg->nameUnsigned() << "\t" << 
-					(leftCtg->id.strand() ? '+' : '-') << "\t" <<
-					rightCtg->nameUnsigned() << "\t" << 
-					(rightCtg->id.strand() ? '+' : '-') << "\n";
+				leftCtg.prefix = "contig_";
+				rightCtg.prefix = "contig_";
+				fout << leftCtg.nameUnsigned() << "\t" << 
+					(leftCtg.id.strand() ? '+' : '-') << "\t" <<
+					rightCtg.nameUnsigned() << "\t" << 
+					(rightCtg.id.strand() ? '+' : '-') << "\n";
 			}
 		}
 	}

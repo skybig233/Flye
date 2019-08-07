@@ -18,7 +18,7 @@ public:
 	RepeatResolver(RepeatGraph& graph, const SequenceContainer& asmSeqs,
 				   const SequenceContainer& readSeqs, 
 				   ReadAligner& aligner,
-				   const MultiplicityInferer& multInf): 
+				   MultiplicityInferer& multInf): 
 		_graph(graph), _asmSeqs(asmSeqs), _readSeqs(readSeqs), 
 		_aligner(aligner), _multInf(multInf) {}
 
@@ -44,6 +44,8 @@ private:
 
 	bool checkByReadExtension(const GraphEdge* edge,
 							  const std::vector<GraphAlignment>& alignments);
+	bool checkForTandemCopies(const GraphEdge* checkEdge,
+							  const std::vector<GraphAlignment>& alignments);
 	void clearResolvedRepeats();
 	std::vector<Connection> getConnections();
 	int  resolveConnections(const std::vector<Connection>& conns, 
@@ -55,6 +57,6 @@ private:
 	const SequenceContainer&   _asmSeqs;
 	const SequenceContainer&   _readSeqs;
 	ReadAligner& _aligner;
-	const MultiplicityInferer& _multInf;
+	MultiplicityInferer& _multInf;
 	std::unordered_map<GraphEdge*, int> _substractedCoverage;
 };

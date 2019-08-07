@@ -21,8 +21,7 @@ namespace
 //into non-overlapping chains (could be more than one chain per read
 //in case of chimera) with maximum score
 std::vector<GraphAlignment>
-	ReadAligner::chainReadAlignments(const SequenceContainer& edgeSeqs,
-								 	 const std::vector<EdgeAlignment>& ovlps) const
+	ReadAligner::chainReadAlignments(const std::vector<EdgeAlignment>& ovlps) const
 {
 	static const int32_t MAX_JUMP = Config::get("maximum_jump");
 	//static const int32_t MAX_SEP = Config::get("max_separation");
@@ -48,10 +47,9 @@ std::vector<GraphAlignment>
 				MAX_JUMP > readDiff && readDiff > -MAX_READ_OVLP &&
 				graphLeftDiff + graphRightDiff < MAX_JUMP)
 			{
-				//int32_t jumpDiv = abs(readDiff - 
-				//					  (graphLeftDiff + graphRightDiff));
-				//int32_t gapCost = (jumpDiv > 100) ? 2 * jumpDiv : 0;
-				int32_t gapCost = std::max(-readDiff, 0);
+				//int32_t gapCost = std::max(-readDiff, 0);
+				int32_t jumpDiv = abs(readDiff - (graphLeftDiff + graphRightDiff));
+				int32_t gapCost = (jumpDiv > 100) ? jumpDiv / 50 : 0;
 				int32_t score = chain.score + nextOvlp.score - gapCost;
 				if (score > maxScore)
 				{
@@ -138,7 +136,7 @@ void ReadAligner::alignReads()
 									MIN_EDGE_OVLP - EDGE_FLANK,
 									/*no overhang*/ 0, /*no max ovlp count*/ 0,
 									/*keep alignment*/ false, /*only max*/ false,
-									(float)Config::get("read_align_ovlp_divergence"),
+									/*no max divergence*/ 1.0f,
 									/*bad end adjust*/ 0.0f, 
 									/*nucl alignment*/ false);
 	OverlapContainer readsOverlaps(readsOverlapper, _readSeqs);
@@ -183,7 +181,7 @@ void ReadAligner::alignReads()
 		std::sort(alignments.begin(), alignments.end(),
 		  [](const EdgeAlignment& e1, const EdgeAlignment& e2)
 			{return e1.overlap.curBegin < e2.overlap.curBegin;});
-		auto readChains = this->chainReadAlignments(_graph.edgeSequences(), alignments);
+		auto readChains = this->chainReadAlignments(alignments);
 
 		std::vector<GraphAlignment> complChains(readChains);
 		for (auto& chain : complChains)

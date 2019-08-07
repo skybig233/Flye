@@ -14,7 +14,8 @@ from collections import defaultdict
 from threading import Thread
 
 from flye.polishing.alignment import (make_alignment, get_contigs_info,
-                                      SynchronizedSamReader)
+                                      SynchronizedSamReader, merge_chunks,
+                                      split_into_chunks)
 from flye.polishing.bubbles import make_bubbles
 import flye.utils.fasta_parser as fp
 from flye.utils.utils import which
@@ -62,50 +63,70 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
 
     prev_assembly = contig_seqs
     contig_lengths = None
+    coverage_stats = None
     for i in xrange(num_iters):
         logger.info("Polishing genome ({0}/{1})".format(i + 1, num_iters))
 
-        alignment_file = os.path.join(work_dir,
-                                      "minimap_{0}.sam".format(i + 1))
+        #split into 1Mb chunks to reduce RAM usage
+        #slightly vary chunk size between iterations
+        CHUNK_SIZE = 1000000 - (i % 2) * 100000
+        chunks_file = os.path.join(work_dir, "chunks_{0}.fasta".format(i + 1))
+        chunks = split_into_chunks(fp.read_sequence_dict(prev_assembly),
+                                       CHUNK_SIZE)
+        fp.write_fasta_dict(chunks, chunks_file)
+
+        ####
         logger.info("Running minimap2")
-        make_alignment(prev_assembly, read_seqs, num_threads,
+        alignment_file = os.path.join(work_dir, "minimap_{0}.sam".format(i + 1))
+        make_alignment(chunks_file, read_seqs, num_threads,
                        work_dir, error_mode, alignment_file,
                        reference_mode=True, sam_output=True)
 
+        #####
         logger.info("Separating alignment into bubbles")
-        contigs_info = get_contigs_info(prev_assembly)
+        contigs_info = get_contigs_info(chunks_file)
         bubbles_file = os.path.join(work_dir,
                                     "bubbles_{0}.fasta".format(i + 1))
         coverage_stats, mean_aln_error = \
-            make_bubbles(alignment_file, contigs_info, prev_assembly,
+            make_bubbles(alignment_file, contigs_info, chunks_file,
                          error_mode, num_threads,
                          bubbles_file)
-        logger.info("Alignment error rate: {0}".format(mean_aln_error))
 
-        logger.info("Correcting bubbles")
-        consensus_out = os.path.join(work_dir, "consensus_{0}.fasta"
-                                     .format(i + 1))
-        polished_file = os.path.join(work_dir, "polished_{0}.fasta"
-                                     .format(i + 1))
+        logger.info("Alignment error rate: {0}".format(mean_aln_error))
+        consensus_out = os.path.join(work_dir, "consensus_{0}.fasta".format(i + 1))
+        polished_file = os.path.join(work_dir, "polished_{0}.fasta".format(i + 1))
         if os.path.getsize(bubbles_file) == 0:
             logger.info("No reads were aligned during polishing")
             if not output_progress:
                 logger.disabled = logger_state
-            open(stats_file, "w").write("seq_name\tlength\tcoverage\n")
+            open(stats_file, "w").write("#seq_name\tlength\tcoverage\n")
             open(polished_file, "w")
             return polished_file, stats_file
-            #return None, None
 
+        #####
+        logger.info("Correcting bubbles")
         _run_polish_bin(bubbles_file, subs_matrix, hopo_matrix,
                         consensus_out, num_threads, output_progress)
-        polished_fasta, polished_lengths = _compose_sequence([consensus_out])
-        fp.write_fasta_dict(polished_fasta, polished_file)
+        polished_fasta, polished_lengths = _compose_sequence(consensus_out)
+        merged_chunks = merge_chunks(polished_fasta)
+        fp.write_fasta_dict(merged_chunks, polished_file)
+
+        #Cleanup
+        os.remove(chunks_file)
+        os.remove(bubbles_file)
+        os.remove(consensus_out)
+        os.remove(alignment_file)
 
         contig_lengths = polished_lengths
         prev_assembly = polished_file
 
+    #merge information from chunks
+    contig_lengths = merge_chunks(contig_lengths, fold_function=sum)
+    coverage_stats = merge_chunks(coverage_stats,
+                                  fold_function=lambda l: sum(l) / len(l))
+
     with open(stats_file, "w") as f:
-        f.write("seq_name\tlength\tcoverage\n")
+        f.write("#seq_name\tlength\tcoverage\n")
         for ctg_id in contig_lengths:
             f.write("{0}\t{1}\t{2}\n".format(ctg_id,
                     contig_lengths[ctg_id], coverage_stats[ctg_id]))
@@ -140,6 +161,7 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
         _, ctg_aln = aln_reader.get_chunk()
         for aln in ctg_aln:
             aln_by_edge[aln.qry_id].append(aln)
+    aln_reader.stop_reading()
 
     MIN_CONTAINMENT = 0.9
     updated_seqs = 0
@@ -164,22 +186,78 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
                 updated_seqs += 1
 
     #writes fasta file with polished egdes
-    edges_polished = os.path.join(work_dir, "polished_edges.fasta")
-    fp.write_fasta_dict(edges_dict, edges_polished)
+    #edges_polished = os.path.join(work_dir, "polished_edges.fasta")
+    #fp.write_fasta_dict(edges_dict, edges_polished)
 
     #writes gfa file with polished edges
-    gfa_polished = open(os.path.join(work_dir, "polished_edges.gfa"), "w")
-    for line in open(gfa_file, "r"):
-        if line.startswith("S"):
-            seq_id = line.split()[1]
-            coverage_tag = line.split()[3]
-            gfa_polished.write("S\t{0}\t{1}\t{2}\n"
-                                .format(seq_id, edges_dict[seq_id], coverage_tag))
-        else:
-            gfa_polished.write(line)
+    with open(os.path.join(work_dir, "polished_edges.gfa"), "w") as gfa_polished, \
+         open(gfa_file, "r") as gfa_in:
+        for line in gfa_in:
+            if line.startswith("S"):
+                seq_id = line.split()[1]
+                coverage_tag = line.split()[3]
+                gfa_polished.write("S\t{0}\t{1}\t{2}\n"
+                                    .format(seq_id, edges_dict[seq_id], coverage_tag))
+            else:
+                gfa_polished.write(line)
 
     logger.debug("{0} sequences remained unpolished"
                     .format(len(edges_dict) - updated_seqs))
+    os.remove(alignment_file)
+
+
+def filter_by_coverage(args, stats_in, contigs_in, stats_out, contigs_out):
+    """
+    Filters out contigs with low coverage
+    """
+    SUBASM_MIN_COVERAGE = 1
+    HARD_MIN_COVERAGE = cfg.vals["hard_minimum_coverage"]
+    RELATIVE_MIN_COVERAGE = cfg.vals["relative_minimum_coverage"]
+
+    ctg_stats = {}
+    sum_cov = 0
+    sum_length = 0
+
+    with open(stats_in, "r") as f:
+        for line in f:
+            if line.startswith("#"): continue
+            tokens = line.split("\t")
+            ctg_id, ctg_len, ctg_cov = tokens[0], int(tokens[1]), int(tokens[2])
+            ctg_stats[ctg_id] = (ctg_len, ctg_cov)
+            sum_cov += ctg_cov * ctg_len
+            sum_length += ctg_len
+
+    mean_coverage = int(float(sum_cov) / sum_length)
+    coverage_threshold = None
+    if args.read_type == "subasm":
+        coverage_threshold = SUBASM_MIN_COVERAGE
+    elif args.meta:
+        coverage_threshold = HARD_MIN_COVERAGE
+    else:
+        coverage_threshold = int(round(float(mean_coverage) /
+                                       RELATIVE_MIN_COVERAGE))
+        coverage_threshold = max(HARD_MIN_COVERAGE, coverage_threshold)
+    logger.debug("Mean contig coverage: {0}, selected threshold: {1}"
+                    .format(mean_coverage, coverage_threshold))
+
+    filtered_num = 0
+    filtered_seq = 0
+    good_fasta = {}
+    for hdr, seq in fp.stream_sequence(contigs_in):
+        if ctg_stats[hdr][1] >= coverage_threshold:
+            good_fasta[hdr] = seq
+        else:
+            filtered_num += 1
+            filtered_seq += ctg_stats[hdr][0]
+    logger.debug("Filtered {0} contigs of total length {1}"
+                    .format(filtered_num, filtered_seq))
+
+    fp.write_fasta_dict(good_fasta, contigs_out)
+    with open(stats_out, "w") as f:
+        f.write("#seq_name\tlength\tcoverage\n")
+        for ctg_id in good_fasta:
+            f.write("{0}\t{1}\t{2}\n".format(ctg_id,
+                    ctg_stats[ctg_id][0], ctg_stats[ctg_id][1]))
 
 
 def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
@@ -187,11 +265,11 @@ def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
     """
     Invokes polishing binary
     """
-    cmdline = [POLISH_BIN, "-t", str(num_threads)]
+    cmdline = [POLISH_BIN, "--bubbles", bubbles_in, "--subs-mat", subs_matrix,
+               "--hopo-mat", hopo_matrix, "--out", consensus_out,
+               "--threads", str(num_threads)]
     if not output_progress:
-        cmdline.append("-q")
-    cmdline.extend([bubbles_in, subs_matrix,
-                    hopo_matrix, consensus_out])
+        cmdline.append("--quiet")
 
     try:
         subprocess.check_call(cmdline)
@@ -203,24 +281,23 @@ def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
         raise PolishException(str(e))
 
 
-def _compose_sequence(consensus_files):
+def _compose_sequence(consensus_file):
     """
     Concatenates bubbles consensuses into genome
     """
     consensuses = defaultdict(list)
     coverage = defaultdict(list)
-    for file_name in consensus_files:
-        with open(file_name, "r") as f:
-            header = True
-            for line in f:
-                if header:
-                    tokens = line.strip().split(" ")
-                    ctg_id = tokens[0][1:]
-                    ctg_pos = int(tokens[1])
-                    coverage[ctg_id].append(int(tokens[2]))
-                else:
-                    consensuses[ctg_id].append((ctg_pos, line.strip()))
-                header = not header
+    with open(consensus_file, "r") as f:
+        header = True
+        for line in f:
+            if header:
+                tokens = line.strip().split(" ")
+                ctg_id = tokens[0][1:]
+                ctg_pos = int(tokens[1])
+                coverage[ctg_id].append(int(tokens[2]))
+            else:
+                consensuses[ctg_id].append((ctg_pos, line.strip()))
+            header = not header
 
     polished_fasta = {}
     polished_stats = {}

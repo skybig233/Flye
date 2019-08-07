@@ -13,7 +13,7 @@
 #include "extender.h"
 
 
-Extender::ExtensionInfo Extender::extendContig(FastaRecord::Id startRead)
+Extender::ExtensionInfo Extender::extendDisjointig(FastaRecord::Id startRead)
 {
 
 	std::unordered_set<FastaRecord::Id> currentReads;
@@ -86,11 +86,12 @@ Extender::ExtensionInfo Extender::extendContig(FastaRecord::Id startRead)
 			//need to check this condition, otherwise there will
 			//be complications when we initiate extension of startRead
 			//to the left
-			if(leftExtendsStart(ovlp.extId)) continue;
+			if (leftExtendsStart(ovlp.extId)) continue;
+			if (_ovlpContainer.hasSelfOverlaps(ovlp.extId)) continue;
 
 			//try to find a good one
 			if (!_chimDetector.isChimeric(ovlp.extId) &&
-				this->countRightExtensions(ovlp.extId) > minExtensions)
+				this->countRightExtensions(ovlp.extId) >= minExtensions)
 			{
 				foundExtension = true;
 				maxExtension = &ovlp;
@@ -178,7 +179,7 @@ Extender::ExtensionInfo Extender::extendContig(FastaRecord::Id startRead)
 }
 
 
-void Extender::assembleContigs()
+void Extender::assembleDisjointigs()
 {
 	//static const int MAX_JUMP = Config::get("maximum_jump");
 	Logger::get().info() << "Extending reads";
@@ -207,7 +208,7 @@ void Extender::assembleContigs()
 
 		//getting overlaps without caching first - so we don't
 		//store overlap information for many trashy reads
-		//that won't result into contig extension
+		//that won't result into disjointig extension
 		auto startOvlps = _ovlpContainer.quickSeqOverlaps(startRead, 
 														  /*max overlaps*/ 100);
 		std::vector<OverlapRange> revOverlaps;
@@ -234,10 +235,10 @@ void Extender::assembleContigs()
 			numInnerOvlp > totalOverlaps / 2) return;
 		
 		//Good to go!
-		ExtensionInfo exInfo = this->extendContig(startRead);
+		ExtensionInfo exInfo = this->extendDisjointig(startRead);
 
 		if (exInfo.reads.size() - exInfo.numSuspicious < 
-			(size_t)Config::get("min_reads_in_contig")) return;
+			(size_t)Config::get("min_reads_in_disjointig")) return;
 
 		/*if (exInfo.leftAsmOverlap + exInfo.rightAsmOverlap > 
 			exInfo.assembledLength + 2 * Parameters::get().minimumOverlap)
@@ -251,6 +252,7 @@ void Extender::assembleContigs()
 		
 		int innerCount = 0;
 		//do not count first and last reads - they are inner by defalut
+		assert(exInfo.reads.size() >= 4);
 		for (size_t i = 1; i < exInfo.reads.size() - 1; ++i)
 		{
 			if (_innerReads.contains(exInfo.reads[i])) ++innerCount;
@@ -260,20 +262,20 @@ void Extender::assembleContigs()
 										  exInfo.reads.size()));
 		if (innerCount > innerThreshold)
 		{
-			Logger::get().debug() << "Discarded contig with "
+			Logger::get().debug() << "Discarded disjointig with "
 				<< exInfo.reads.size() << " reads and "
 				<< innerCount << " inner overlaps";
 			return;
 		}
 
-		Logger::get().debug() << "Assembled contig " 
+		Logger::get().debug() << "Assembled disjointig " 
 			<< std::to_string(_readLists.size() + 1)
 			<< "\n\tWith " << exInfo.reads.size() << " reads"
 			<< "\n\tStart read: " << _readsContainer.seqName(startRead)
 			<< "\n\tAt position: " << exInfo.stepsToTurn
 			<< "\n\tleftTip: " << exInfo.leftTip 
 			<< " rightTip: " << exInfo.rightTip
-			<< "\n\tSuspicios: " << exInfo.numSuspicious
+			<< "\n\tSuspicious: " << exInfo.numSuspicious
 			<< "\n\tMean extensions: " << exInfo.meanOverlaps
 			<< "\n\tAvg overlap len: " << exInfo.avgOverlapSize
 			<< "\n\tMin overlap len: " << exInfo.minOverlapSize
@@ -379,8 +381,9 @@ void Extender::assembleContigs()
 		Logger::get().info() << "Added " << singletonsAdded << " singleton reads";
 	}
 
-	this->convertToContigs();
-	Logger::get().info() << "Assembled " << _contigPaths.size() << " draft contigs";
+	this->convertToDisjointigs();
+	Logger::get().info() << "Assembled " << _disjointigPaths.size() 
+		<< " disjointigs";
 }
 
 
@@ -451,18 +454,18 @@ std::vector<FastaRecord::Id>
 	return innerReads;
 }
 
-void Extender::convertToContigs()
+void Extender::convertToDisjointigs()
 {
 	for (const auto& exInfo : _readLists)
 	{
 		ContigPath path;
 		if (!exInfo.singleton)
 		{
-			path.name = "contig_" + std::to_string(_contigPaths.size() + 1);
+			path.name = "disjointig_" + std::to_string(_disjointigPaths.size() + 1);
 		}
 		else
 		{
-			path.name = "read_" + std::to_string(_contigPaths.size() + 1);
+			path.name = "read_" + std::to_string(_disjointigPaths.size() + 1);
 		}
 		//path.trimLeft = std::max(0, exInfo.leftAsmOverlap - 
 		//							2 * Parameters::get().minimumOverlap);
@@ -501,7 +504,7 @@ void Extender::convertToContigs()
 			path.overlaps.push_back(readsOvlp);
 		}
 		path.sequences.push_back(_readsContainer.getSeq(exInfo.reads.back()));
-		_contigPaths.push_back(std::move(path));
+		_disjointigPaths.push_back(std::move(path));
 	}
 }
 

@@ -30,68 +30,84 @@ bool parseArgs(int argc, char** argv, std::string& readsFasta,
 {
 	auto printUsage = [argv]()
 	{
-		std::cerr << "Usage: " << argv[0]
-				  << "\tin_assembly reads_files out_folder config_path\n\t"
-				  << "[-l log_file] [-t num_threads] [-v min_overlap]\n\t"
-				  << "[-d] [-u]\n\n"
-				  << "positional arguments:\n"
-				  << "\tin_assembly\tpath to input assembly\n"
-				  << "\treads_files\tcomma-separated list with reads\n"
-				  << "\tout_assembly\tpath to output assembly\n"
-				  << "\tconfig_path\tpath to config file\n"
-				  << "\noptional arguments:\n"
-				  << "\t-k kmer_size\tk-mer size [default = 15] \n"
-				  << "\t-v min_overlap\tminimum overlap between reads "
+		std::cerr << "Usage: flye-repeat "
+				  << " --disjointigs path --reads path --out-dir path --config path\n"
+				  << "\t\t[--log path] [--treads num] [--kmer size] [--meta]\n"
+				  << "\t\t[--min-ovlp size] [--debug] [-h]\n\n"
+				  << "Required arguments:\n"
+				  << "  --disjointigs path\tpath to disjointigs file\n"
+				  << "  --reads path\tcomma-separated list of read files\n"
+				  << "  --out-dir path\tpath to output directory\n"
+				  << "  --config path\tpath to the config file\n\n"
+				  << "Optional arguments:\n"
+				  << "  --kmer size\tk-mer size [default = 15] \n"
+				  << "  --min-ovlp size\tminimum overlap between reads "
 				  << "[default = 5000] \n"
-				  << "\t-d \t\tenable debug output "
+				  << "  --debug \t\tenable debug output "
 				  << "[default = false] \n"
-				  << "\t-u \t\tenable uneven coverage (metagenome) mode "
+				  << "  --meta \t\tenable uneven coverage (metagenome) mode "
 				  << "[default = false] \n"
-				  << "\t-l log_file\toutput log to file "
+				  << "  --log log_file\toutput log to file "
 				  << "[default = not set] \n"
-				  << "\t-t num_threads\tnumber of parallel threads "
+				  << "  --threads num_threads\tnumber of parallel threads "
 				  << "[default = 1] \n";
 	};
+	
+	int optionIndex = 0;
+	static option longOptions[] =
+	{
+		{"disjointigs", required_argument, 0, 0},
+		{"reads", required_argument, 0, 0},
+		{"out-dir", required_argument, 0, 0},
+		{"config", required_argument, 0, 0},
+		{"log", required_argument, 0, 0},
+		{"threads", required_argument, 0, 0},
+		{"kmer", required_argument, 0, 0},
+		{"min-ovlp", required_argument, 0, 0},
+		{"meta", no_argument, 0, 0},
+		{"debug", no_argument, 0, 0},
+		{0, 0, 0, 0}
+	};
 
-	const char optString[] = "l:t:v:k:hdu";
 	int opt = 0;
-	while ((opt = getopt(argc, argv, optString)) != -1)
+	while ((opt = getopt_long(argc, argv, "h", longOptions, &optionIndex)) != -1)
 	{
 		switch(opt)
 		{
-		case 't':
-			numThreads = atoi(optarg);
+		case 0:
+			if (!strcmp(longOptions[optionIndex].name, "kmer"))
+				kmerSize = atoi(optarg);
+			else if (!strcmp(longOptions[optionIndex].name, "threads"))
+				numThreads = atoi(optarg);
+			else if (!strcmp(longOptions[optionIndex].name, "min-ovlp"))
+				minOverlap = atoi(optarg);
+			else if (!strcmp(longOptions[optionIndex].name, "log"))
+				logFile = optarg;
+			else if (!strcmp(longOptions[optionIndex].name, "debug"))
+				debug = true;
+			else if (!strcmp(longOptions[optionIndex].name, "meta"))
+				unevenCov = true;
+			else if (!strcmp(longOptions[optionIndex].name, "reads"))
+				readsFasta = optarg;
+			else if (!strcmp(longOptions[optionIndex].name, "out-dir"))
+				outFolder = optarg;
+			else if (!strcmp(longOptions[optionIndex].name, "disjointigs"))
+				inAssembly = optarg;
+			else if (!strcmp(longOptions[optionIndex].name, "config"))
+				configPath = optarg;
 			break;
-		case 'v':
-			minOverlap = atoi(optarg);
-			break;
-		case 'k':
-			kmerSize = atoi(optarg);
-			break;
-		case 'l':
-			logFile = optarg;
-			break;
-		case 'd':
-			debug = true;
-			break;
-		case 'u':
-			unevenCov = true;
-			break;
+
 		case 'h':
 			printUsage();
 			exit(0);
 		}
 	}
-	if (argc - optind != 4)
+	if (readsFasta.empty() || outFolder.empty() || 
+		inAssembly.empty() || configPath.empty())
 	{
 		printUsage();
 		return false;
 	}
-
-	inAssembly = *(argv + optind);
-	readsFasta = *(argv + optind + 1);
-	outFolder = *(argv + optind + 2);
-	configPath = *(argv + optind + 3);
 
 	return true;
 }
@@ -173,7 +189,8 @@ int main(int argc, char** argv)
 
 	MultiplicityInferer multInf(rg, aligner, seqAssembly, seqReads);
 	multInf.estimateCoverage();
-	multInf.removeUnsupportedEdges();
+	//multInf.removeUnsupportedEdges();
+	multInf.maskUnsupportedEdges();
 	multInf.removeUnsupportedConnections();
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_coll.gv");
 	rg.storeGraph(outFolder + "/before_coll_repeat_graph_dump");
@@ -183,14 +200,14 @@ int main(int argc, char** argv)
 								  /*only pos strand*/ true);
 
 
-	//for diploid genomes, turned off by default
-	multInf.collapseHeterozygousLoops();
-	multInf.collapseHeterozygousBulges();
+	multInf.collapseHeterozygousLoops(/*remove alternatives*/ false);
+	multInf.collapseHeterozygousBulges(/*remove alternatives*/ false);
+	
+	//aligner.storeAlignments(outFolder + "/read_alignment_before_rr");
 
 	Logger::get().info() << "Resolving repeats";
 	RepeatResolver resolver(rg, seqAssembly, seqReads, aligner, multInf);
 	resolver.findRepeats();
-
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gv");
 	//outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gfa");
 	outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_before_rr.fasta");
@@ -203,6 +220,13 @@ int main(int argc, char** argv)
 
 
 	resolver.resolveRepeats();
+
+	//clean graph again after repeat resolution
+	multInf.removeUnsupportedEdges();
+	multInf.collapseHeterozygousLoops(/*remove alternatives*/ true);
+	multInf.collapseHeterozygousBulges(/*remove alternatives*/ true);
+	resolver.findRepeats();
+	
 	resolver.finalizeGraph();
 
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_after_rr.gv");
@@ -211,25 +235,6 @@ int main(int argc, char** argv)
 	SequenceContainer::writeFasta(edgeSequences.iterSeqs(), 
 								  outFolder + "/repeat_graph_edges.fasta",
 								  /*only pos strand*/ true);
-	//outGen.dumpRepeats(proc.getEdgesPaths(),
-	//				   outFolder + "/repeats_dump");
-
-	/*Logger::get().info() << "Generating contigs";
-
-	ContigExtender extender(rg2, aln2, seqAssembly2, seqReads2, 
-							multInf.getMeanCoverage());
-	extender.generateUnbranchingPaths();
-	extender.generateContigs();
-	extender.outputContigs(outFolder + "/graph_paths.fasta");
-	extender.outputStatsTable(outFolder + "/contigs_stats.txt");
-	extender.outputScaffoldConnections(outFolder + "/scaffolds_links.txt");
-
-	outGen2.outputDot(extender.getUnbranchingPaths(),
-					 outFolder + "/graph_final.gv");
-	outGen2.outputFasta(extender.getUnbranchingPaths(),
-					   outFolder + "/graph_final.fasta");
-	outGen2.outputGfa(extender.getUnbranchingPaths(),
-					 outFolder + "/graph_final.gfa");*/
 
 	Logger::get().debug() << "Peak RAM usage: " 
 		<< getPeakRSS() / 1024 / 1024 / 1024 << " Gb";

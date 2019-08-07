@@ -105,8 +105,9 @@ def generate_stats(repeat_file, polished_file, scaffolds, out_stats):
     #contigs_length = {}
     #contigs_coverage = {}
     contigs_stats = {}
-    header_line = "seq_name\tlength\tcov.\tcirc.\trepeat\tmult.\tgraph_path"
-    for line in open(repeat_file, "r").readlines()[1:]:
+    header_line = "#seq_name\tlength\tcov.\tcirc.\trepeat\tmult.\tgraph_path"
+    for line in open(repeat_file, "r"):
+        if line.startswith("#"): continue
         tokens = line.strip().split("\t")
         contigs_stats[tokens[0]] = SeqStats(*tokens)
         #if polished_file is None:
@@ -114,7 +115,8 @@ def generate_stats(repeat_file, polished_file, scaffolds, out_stats):
             #contigs_coverage[tokens[0]] = int(tokens[2])
 
     if polished_file is not None:
-        for line in open(polished_file, "r").readlines()[1:]:
+        for line in open(polished_file, "r"):
+            if line.startswith("#"): continue
             tokens = line.strip().split("\t")
             contigs_stats[tokens[0]].length = tokens[1]
             contigs_stats[tokens[0]].coverage = tokens[2]
@@ -195,14 +197,22 @@ def generate_stats(repeat_file, polished_file, scaffolds, out_stats):
 
     logger.info("Assembly statistics:\n\n"
                 "\tTotal length:\t{0}\n"
-                "\tContigs:\t{1}\n"
-                "\tScaffolds:\t{3}\n"
+                "\tFragments:\t{1}\n"
                 #"\tContigs N50:\t{2}\n"
-                "\tScaffolds N50:\t{4}\n"
-                "\tLargest scf:\t{5}\n"
-                "\tMean coverage:\t{6}\n"
-                .format(total_length, num_contigs, ctg_n50,
-                        num_scaffolds, scf_n50, largest_scf, mean_read_cov))
+                "\tFragments N50:\t{3}\n"
+                "\tLargest frg:\t{4}\n"
+                "\tScaffolds:\t{2}\n"
+                "\tMean coverage:\t{5}\n"
+                .format(total_length, num_scaffolds, num_contigs - num_scaffolds,
+                        scf_n50, largest_scf, mean_read_cov))
+
+
+def short_statistics(fasta_file):
+    lengths = fp.read_sequence_lengths(fasta_file).values()
+    if not lengths:
+        return 0, 0
+    total_size = sum(lengths)
+    return total_size, _calc_n50(lengths, total_size)
 
 
 def rc(sign):
