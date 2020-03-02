@@ -23,7 +23,8 @@ public:
 		_aligner(aligner), _multInf(multInf) {}
 
 	void findRepeats();
-	void resolveRepeats();
+	int  resolveRepeats();
+	int  resolveSimpleRepeats();
 	void finalizeGraph();
 
 private:
@@ -42,6 +43,10 @@ private:
 		int32_t flankLength;
 	};
 
+	int  maskUnsupportedEdges();
+	void separatePath(const GraphPath& path, EdgeSequence segment,
+					  FastaRecord::Id startId);
+
 	bool checkByReadExtension(const GraphEdge* edge,
 							  const std::vector<GraphAlignment>& alignments);
 	bool checkForTandemCopies(const GraphEdge* checkEdge,
@@ -50,8 +55,6 @@ private:
 	std::vector<Connection> getConnections();
 	int  resolveConnections(const std::vector<Connection>& conns, 
 							float minSupport);
-	void separatePath(const GraphPath& path, EdgeSequence segment,
-					  FastaRecord::Id startId);
 
 	RepeatGraph& _graph;
 	const SequenceContainer&   _asmSeqs;

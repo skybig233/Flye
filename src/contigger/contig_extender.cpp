@@ -11,6 +11,32 @@ void ContigExtender::generateUnbranchingPaths()
 	GraphProcessor proc(_graph, _asmSeqs);
 	_unbranchingPaths = proc.getUnbranchingPaths();
 
+	//tryna synchornize orientations of alternative
+	//contigs from the same group
+	std::unordered_set<FastaRecord::Id> flipped;
+	for (auto& path : _unbranchingPaths)
+	{
+		int numEven = 0;
+		for (auto& edge : path.path)
+		{
+			if (edge->altGroupId != -1 && edge->altGroupId % 2 == 0) ++numEven;
+		}
+		//trying to make groups with even alt ids to have positive path ids
+		if (!path.id.strand() && numEven > (int)path.path.size() / 2)
+		{
+			flipped.insert(path.id);
+			flipped.insert(path.id.rc());
+		}
+	}
+	for (auto& path : _unbranchingPaths)
+	{
+		if (flipped.count(path.id))
+		{
+			path.id = path.id.rc();
+		}
+	}
+	Logger::get().debug() << "Flipped " << flipped.size() / 2;
+
 	_edgeToPath.clear();
 	for (auto& path : _unbranchingPaths)
 	{
@@ -38,7 +64,7 @@ void ContigExtender::generateContigs()
 
 	bool graphContinue = (bool)Config::get("extend_contigs_with_repeats");
 
-	OutputGenerator outGen(_graph, _aligner, _readSeqs);
+	OutputGenerator outGen(_graph);
 	auto coreSeqs = outGen.generatePathSequences(_unbranchingPaths);
 	std::unordered_map<UnbranchingPath*, FastaRecord*> upathsSeqs;
 	for (size_t i = 0; i < _unbranchingPaths.size(); ++i)
@@ -287,9 +313,9 @@ void ContigExtender::outputStatsTable(const std::string& filename)
 	if (!fout) throw std::runtime_error("Can't write " + filename);
 
 	fout << "#seq_name\tlength\tcoverage\tcircular\trepeat"
-		<< "\tmult\ttelomere\tgraph_path\n";
+		<< "\tmult\ttelomere\talt_group\tgraph_path\n";
 
-	char YES_NO[] = {'-', '+'};
+	char YES_NO[] = {'N', 'Y'};
 
 	//TODO: compute mean coverage
 	int64_t sumCov = 0;
@@ -316,6 +342,17 @@ void ContigExtender::outputStatsTable(const std::string& filename)
 		int estMult = std::max(1.0f, std::round((float)ctg.graphEdges.meanCoverage / 
 											    meanCoverage));
 
+		int altGroup = ctg.graphEdges.path.front()->altGroupId;
+		for (auto& edge : ctg.graphEdges.path)
+		{
+			if (edge->altGroupId != altGroup)
+			{
+				altGroup = -1;
+				break;
+			}
+		}
+		std::string altGroupStr = (altGroup == -1) ? "*" : std::to_string(altGroup);
+
 		std::string telomereStr;
 		bool telLeft = (ctg.graphEdges.path.front()->nodeLeft->isTelomere());
 		bool telRight = (ctg.graphEdges.path.back()->nodeRight->isTelomere());
@@ -328,7 +365,8 @@ void ContigExtender::outputStatsTable(const std::string& filename)
 			<< ctg.graphEdges.meanCoverage << "\t"
 			<< YES_NO[ctg.graphEdges.circular]
 			<< "\t" << YES_NO[ctg.graphEdges.repetitive] << "\t"
-			<< estMult << "\t" << telomereStr << "\t" << pathStr << "\n";
+			<< estMult << "\t" << telomereStr << "\t" << altGroupStr << "\t"
+			<< pathStr << "\n";
 
 		//Logger::get().debug() << "Contig: " << ctg.graphEdges.id.signedId()
 		//	<< ": " << pathStr;
@@ -353,13 +391,13 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 	std::ofstream fout(filename);
 	if (!fout) throw std::runtime_error("Can't open " + filename);
 
-	auto reachableEdges = [this](GraphEdge* edge)
+	auto reachableEdges = [this](GraphEdge* startEdge)
 	{
 		std::vector<GraphEdge*> dfsStack;
 		std::unordered_set<GraphEdge*> visited;
 		std::unordered_set<GraphEdge*> reachableUnique;
 
-		dfsStack.push_back(edge);
+		dfsStack.push_back(startEdge);
 		while(!dfsStack.empty())
 		{
 			GraphEdge* curEdge = dfsStack.back(); 
@@ -375,7 +413,9 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 				{
 					dfsStack.push_back(adjEdge);
 				}
-				else if (!adjEdge->isRepetitive())
+				else if (!adjEdge->isRepetitive() &&
+						 adjEdge->edgeId != startEdge->edgeId &&
+						 adjEdge->edgeId != startEdge->edgeId.rc())
 				{
 					reachableUnique.insert(adjEdge);
 					if (reachableUnique.size() > 1) return reachableUnique;
@@ -385,6 +425,7 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 		return reachableUnique;
 	};
 
+	int numScaffolds = 0;
 	for (auto& edge : _graph.iterEdges())
 	{
 		if (edge->repetitive) continue;
@@ -409,7 +450,9 @@ void ContigExtender::outputScaffoldConnections(const std::string& filename)
 					(leftCtg.id.strand() ? '+' : '-') << "\t" <<
 					rightCtg.nameUnsigned() << "\t" << 
 					(rightCtg.id.strand() ? '+' : '-') << "\n";
+				++numScaffolds;
 			}
 		}
 	}
+	Logger::get().info() << "Added " << numScaffolds << " scaffold connections";
 }

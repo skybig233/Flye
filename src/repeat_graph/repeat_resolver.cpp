@@ -10,49 +10,12 @@
 #include "../common/config.h"
 #include "../common/utils.h"
 #include "../common/parallel.h"
+#include "../common/disjoint_set.h"
 
 #include <lemon/list_graph.h>
 #include <lemon/matching.h>
 
-//Given the path in the graph with a resolved repeat inside,
-//separates in into a single unbranching path. The first
-//and the last edges of the graphPath parameter
-//should correspond to the flanking unique edges
-void RepeatResolver::separatePath(const GraphPath& graphPath, 
-								  EdgeSequence readSegment, 
-								  FastaRecord::Id newId)
-{
-	//first edge
-	GraphNode* leftNode = _graph.addNode();
-	vecRemove(graphPath.front()->nodeRight->inEdges, graphPath.front());
-	graphPath.front()->nodeRight = leftNode;
-	leftNode->inEdges.push_back(graphPath.front());
-	int32_t pathCoverage = (graphPath.front()->meanCoverage +
-						    graphPath.back()->meanCoverage) / 2;
 
-	//repetitive edges in the middle
-	for (size_t i = 1; i < graphPath.size() - 1; ++i)
-	{
-		graphPath[i]->resolved = true;
-		_substractedCoverage[graphPath[i]] += pathCoverage;
-		//graphPath[i]->substractedCoverage += pathCoverage;
-	}
-
-	GraphNode* rightNode = leftNode;
-	if (graphPath.size() > 2)
-	{
-		rightNode = _graph.addNode();
-		GraphEdge* newEdge = _graph.addEdge(GraphEdge(leftNode, rightNode,
-													  newId));
-		newEdge->seqSegments.push_back(readSegment);
-		newEdge->meanCoverage = pathCoverage;
-	}
-
-	//last edge
-	vecRemove(graphPath.back()->nodeLeft->outEdges, graphPath.back());
-	graphPath.back()->nodeLeft = rightNode;
-	rightNode->outEdges.push_back(graphPath.back());
-}
 
 //Resolves all repeats simulateously through the graph mathcing optimization,
 //Given the reads connecting unique edges (or pairs of edges in the transitions graph)
@@ -185,22 +148,22 @@ int RepeatResolver::resolveConnections(const std::vector<Connection>& connection
 	{
 		FastaRecord::Id edgeId = _graph.newEdgeId();
 
-		std::string description = "edge_" + std::to_string(edgeId.signedId()) + 
-				"_0_" + _readSeqs.getRecord(conn.readSeq.readId).description + "_" +
-				std::to_string(conn.readSeq.start) + "_" + 
-				std::to_string(conn.readSeq.end);
+		std::stringstream ss;
+		ss << "edge_" << edgeId.signedId() << "_0_" 
+			<< _readSeqs.getRecord(conn.readSeq.readId).description << "_"
+			<< conn.readSeq.start << "_" << conn.readSeq.end;
 		EdgeSequence edgeSeq = 
 			_graph.addEdgeSequence(_readSeqs.getSeq(conn.readSeq.readId),
 								   conn.readSeq.start, conn.readSeq.length(),
-								   description);
+								   ss.str());
 
 		this->separatePath(conn.path, edgeSeq, edgeId);
 		this->separatePath(_graph.complementPath(conn.path), 
-						   edgeSeq.complement(), edgeId.rc());
+						    edgeSeq.complement(), edgeId.rc());
 	}
 
-	Logger::get().debug() << "Resolved: " << uniqueConnections.size() << " links: "
-						  << connections.size() / 2;
+	Logger::get().debug() << "[SIMPL] Resolved repeats: " << uniqueConnections.size();
+	Logger::get().debug() << "RR links: " << connections.size() / 2;
 	Logger::get().debug() << "Unresolved: " << unresolvedLinks;
 
 	return uniqueConnections.size();
@@ -308,7 +271,7 @@ bool RepeatResolver::checkByReadExtension(const GraphEdge* checkEdge,
 
 			std::string star = outEdgeCount.first->repetitive ? "R" : " ";
 			std::string loop = outEdgeCount.first->isLooped() ? "L" : " ";
-			std::string tip = outEdgeCount.first->isTip() ? "T" : " ";
+			std::string tip = outEdgeCount.first->isRightTerminal() ? "T" : " ";
 			Logger::get().debug() << "\t" << star << " " << loop << " " << tip << " "
 				<< outEdgeCount.first->edgeId.signedId() << "\tnum:" << outEdgeCount.second.size()
 				<< "\tflank:" << maxFlank << "\tspan:" << minSpan;
@@ -318,30 +281,70 @@ bool RepeatResolver::checkByReadExtension(const GraphEdge* checkEdge,
 	return false;
 }
 
+int RepeatResolver::maskUnsupportedEdges()
+{
+
+	GraphProcessor proc(_graph, _asmSeqs);
+	auto unbranchingPaths = proc.getUnbranchingPaths();
+
+	int32_t coverageThreshold = 0;
+	const int MIN_CUTOFF = std::round((float)Config::get("min_read_cov_cutoff"));
+	if (!Parameters::get().unevenCoverage)
+	{
+		coverageThreshold = std::round((float)_multInf.getMeanCoverage() / 
+										Config::get("graph_cov_drop_rate"));
+		coverageThreshold = std::max(MIN_CUTOFF, coverageThreshold);
+	}
+	else
+	{
+		coverageThreshold = MIN_CUTOFF;
+	}
+	Logger::get().debug() << "Read coverage cutoff: " << coverageThreshold;
+
+	int numMasked = 0;
+	for (auto& path : unbranchingPaths)
+	{
+		if (!path.id.strand()) continue;
+
+		//it's a dead end
+		//if (path.nodeRight()->outEdges.size() > 0) continue;
+
+		if (path.meanCoverage < coverageThreshold)
+		{
+			Logger::get().debug() << "Low-coverage: " 
+				<< path.edgesStr() << " " << path.meanCoverage;
+
+			for (auto& edge : path.path)
+			{
+				edge->repetitive = true;
+				_graph.complementEdge(edge)->repetitive = true;
+			}
+			++numMasked;
+		}
+	}
+	//Logger::get().debug() << "[SIMPL] Masked " << numMasked
+	//	<< " paths with low coverage";
+
+	return numMasked;
+}
+
+
 //Classifies all edges into unique and repetitive based on the coverage + 
 //alignment information - one of the key steps here.
 void RepeatResolver::findRepeats()
 {
 	Logger::get().debug() << "Finding repeats";
 
-	std::unordered_map<GraphEdge*, 
-					   std::vector<GraphAlignment>> alnIndex;
-	for (auto& aln : _aligner.getAlignments())
-	{
-		if (aln.size() > 1)
-		{
-			for (auto& edgeAln : aln)
-			{
-				alnIndex[edgeAln.edge].push_back(aln);
-			}
-		}
-	}
+	auto alnIndex = _aligner.makeAlignmentIndex();
 
 	//all edges are unique at the beginning
 	for (auto& edge : _graph.iterEdges())
 	{
 		edge->repetitive = false;
 	}
+
+	//mask the ones with very low coverage
+	this->maskUnsupportedEdges();
 
 	//Will operate on unbranching paths rather than single edges
 	GraphProcessor proc(_graph, _asmSeqs);
@@ -412,7 +415,7 @@ void RepeatResolver::findRepeats()
 		}
 
 		//mask unreliable edges with low coverage
-		for (auto& edge : path.path)
+		/*for (auto& edge : path.path)
 		{
 			if (edge->unreliable)
 			{
@@ -421,7 +424,7 @@ void RepeatResolver::findRepeats()
 				Logger::get().debug() << "Unreliable: " << path.edgesStr();
 				break;
 			}
-		}
+		}*/
 
 		//mask edges that appear multiple times within single reads
 		for (auto& edge : path.path)
@@ -456,7 +459,11 @@ void RepeatResolver::findRepeats()
 		{
 			if (!path->id.strand()) continue;
 			if (path->path.front()->repetitive) continue;
-			//if (path->length > (int)Config::get("unique_edge_length")) continue;
+
+			//be more aggressive in metagenome mode: assume that edges longer than 50k
+			//are unique
+			//if (Parameters::get().unevenCoverage &&
+			//	path->length > (int)Config::get("unique_edge_length")) continue;
 
 			bool rightRepeat = 
 				this->checkByReadExtension(path->path.back(), 
@@ -473,6 +480,51 @@ void RepeatResolver::findRepeats()
 					<< path->edgesStr() << "\t" << path->length << "\t" 
 					<< path->meanCoverage << "\t" " ("
 					<< leftRepeat << "," << rightRepeat << ")";
+			}
+		}
+	}
+
+	//propagate repetitiveness through linked edges (flanking haplotype bubbles)
+	for (GraphEdge* edge : _graph.iterEdges())
+	{
+		if (!edge->repetitive) continue;
+
+		GraphEdge* curEdge = edge;
+		for (;;)
+		{
+			curEdge->repetitive = true;
+			if (curEdge->nodeRight->inEdges.size() == 1 &&
+				curEdge->nodeRight->outEdges.size() == 1 &&
+				!curEdge->nodeRight->outEdges[0]->repetitive)
+			{
+				curEdge = curEdge->nodeRight->outEdges[0];
+			}
+			else if (curEdge->rightLink && !curEdge->rightLink->repetitive)
+			{
+				curEdge = curEdge->rightLink;
+			}
+			else
+			{
+				break;
+			}
+		}
+		curEdge = edge;
+		for (;;)
+		{
+			curEdge->repetitive = true;
+			if (curEdge->nodeLeft->inEdges.size() == 1 &&
+				curEdge->nodeLeft->outEdges.size() == 1 &&
+				!curEdge->nodeLeft->inEdges[0]->repetitive)
+			{
+				curEdge = curEdge->nodeLeft->inEdges[0];
+			}
+			else if (curEdge->leftLink && !curEdge->leftLink->repetitive)
+			{
+				curEdge = curEdge->leftLink;
+			}
+			else
+			{
+				break;
 			}
 		}
 	}
@@ -520,7 +572,7 @@ void RepeatResolver::finalizeGraph()
 
 //Iterates repeat detection and resolution until
 //no new repeats are resolved
-void RepeatResolver::resolveRepeats()
+/*void RepeatResolver::resolveRepeats()
 {
 	const float MIN_SUPPORT = Config::get("min_repeat_res_support");
 	while (true)
@@ -539,6 +591,22 @@ void RepeatResolver::resolveRepeats()
 	GraphProcessor proc(_graph, _asmSeqs);
 	proc.fixChimericJunctions();
 	_aligner.updateAlignments();
+}*/
+
+int RepeatResolver::resolveRepeats()
+{
+	const float MIN_SUPPORT = Config::get("min_repeat_res_support");
+
+	auto connections = this->getConnections();
+	int resolvedConnections = 
+		this->resolveConnections(connections, MIN_SUPPORT);
+	this->clearResolvedRepeats();
+
+	GraphProcessor proc(_graph, _asmSeqs);
+	proc.fixChimericJunctions();
+	_aligner.updateAlignments();
+
+	return resolvedConnections;
 }
 
 
@@ -548,7 +616,7 @@ std::vector<RepeatResolver::Connection>
 	RepeatResolver::getConnections()
 {
 	
-	auto safeEdge = [this](GraphEdge* edge)
+	auto safeEdge = [](GraphEdge* edge)
 	{
 		return !edge->isRepetitive();
 	};
@@ -579,16 +647,33 @@ std::vector<RepeatResolver::Connection>
 			currentAln.push_back(aln);
 			if (safeEdge(aln.edge) && currentAln.front().edge != aln.edge)
 			{
-				if (!currentAln.back().edge->nodeLeft->isBifurcation() &&
-					!currentAln.front().edge->nodeRight->isBifurcation()) continue;
+				bool reliableConnection = true;
+
+				//if any of the edges does not prevent contig extenstion, 
+				//no need to resolve it
+				if (!currentAln.front().edge->nodeRight->isBifurcation() ||
+					!currentAln.back().edge->nodeLeft->isBifurcation()) reliableConnection = false;
 
 				//don't connect edges if they both were previously repetitive
-				if (currentAln.back().edge->resolved &&
-					currentAln.front().edge->resolved) continue;
+				//(end then became unique)
+				if (currentAln.front().edge->resolved &&
+					currentAln.back().edge->resolved) reliableConnection = false;
 
-				//if (currentAln.front().overlap.seqDivergence > 0.15 ||
-				//	currentAln.back().overlap.seqDivergence > 0.15) continue;
-				
+				//don't connect edges, if they are already linked
+				//(through a alternative haplotypes structure)
+				if (currentAln.front().edge->rightLink || 
+					currentAln.back().edge->leftLink) reliableConnection = false;
+
+				if (!reliableConnection)
+				{
+					currentAln.clear();
+					currentAln.push_back(aln);
+					readStart = aln.overlap.curEnd + aln.overlap.extLen - 
+								aln.overlap.extEnd;
+					readStart = std::min(readStart, aln.overlap.curLen - MAGIC_100);
+					continue;
+				}
+
 				int32_t flankScore = std::min(currentAln.front().overlap.curRange(),
 											  currentAln.back().overlap.curRange());
 				GraphPath currentPath;
@@ -600,7 +685,7 @@ std::vector<RepeatResolver::Connection>
 				//TODO: fix this ad-hoc fix. Currently, if read connects
 				//two consecutive edges (for example, when resolving chimera junctions,
 				//we still would insert a tiny bit of read sequence as a placeholder.
-				//Probably, wouldn't harm, but who knows..
+				//Probably, wouldn't hurt, but who knows..
 				readEnd = std::max(readStart + MAGIC_100 - 1, readEnd);	
 				if (readStart < 0 || readEnd >= aln.overlap.curLen)
 				{
@@ -611,12 +696,6 @@ std::vector<RepeatResolver::Connection>
 					break;
 				}
 
-				/*std::string description = "read_seq_" + 
-					std::to_string(aln.overlap.curId.signedId());
-				EdgeSequence edgeSeq = 
-					_graph.addEdgeSequence(_readSeqs.getSeq(aln.overlap.curId),
-										   readStart, readEnd - readStart,
-										   description);*/
 				ReadSequence readSeq = {aln.overlap.curId, readStart, readEnd};
 				ReadSequence complRead = {aln.overlap.curId.rc(), 
 										  aln.overlap.curLen - readEnd - 1,
@@ -717,3 +796,203 @@ void RepeatResolver::clearResolvedRepeats()
 	for (auto node : toRemove) _graph.removeNode(node);
 	_aligner.updateAlignments();
 }
+
+
+int RepeatResolver::resolveSimpleRepeats()
+{
+	static const int MIN_JCT_SUPPORT = 1;
+
+	auto alnIndex = _aligner.makeAlignmentIndex();
+
+	GraphProcessor proc(_graph, _asmSeqs);
+	auto unbranchingPaths = proc.getUnbranchingPaths();
+
+	std::vector<Connection> resolvedConnections;
+	for (auto& pathToResolve : unbranchingPaths)
+	{
+		if (!pathToResolve.id.strand()) continue;
+		if (pathToResolve.path.front()->selfComplement) continue;
+
+		std::unordered_set<GraphEdge*> inputs(pathToResolve.nodeLeft()->inEdges.begin(),
+											  pathToResolve.nodeLeft()->inEdges.end());
+		std::unordered_set<GraphEdge*> outputs(pathToResolve.nodeRight()->outEdges.begin(),
+											   pathToResolve.nodeRight()->outEdges.end());
+		if (pathToResolve.nodeLeft()->outEdges.size() != 1 ||
+			pathToResolve.nodeRight()->inEdges.size() != 1 ||
+			inputs.size() != outputs.size() ||
+			inputs.size() <= 1) continue;
+
+		std::unordered_map<GraphEdge*, 
+					   	   std::unordered_map<GraphEdge*, int>> readSupport;
+		std::unordered_map<GraphEdge*, 
+					   	   std::unordered_map<GraphEdge*, ReadSequence>> bridgingReads;
+		for (GraphEdge* inEdge : inputs)
+		{
+			for (auto& aln : alnIndex[inEdge])
+			{
+				for (size_t i = 0; i < aln.size(); ++i)
+				{
+					if (aln[i].edge != inEdge) continue;
+					for (size_t j = i + 1; j < aln.size(); ++j)
+					{
+						if (outputs.count(aln[j].edge))
+						{
+							++readSupport[inEdge][aln[j].edge];
+							bridgingReads[inEdge][aln[j].edge] = 
+								{aln[i].overlap.curId, aln[i].overlap.curEnd, 
+								 aln[j].overlap.curBegin};
+							break;
+						}
+					}
+				}
+			}
+		}
+
+		//initializing sets (to cluster them later)
+		struct EdgeDir
+		{
+			GraphEdge* edge;
+			bool isEntrance;
+		};
+		typedef SetNode<EdgeDir> SetElement;
+		SetVec<EdgeDir> allElements;
+		std::unordered_map<GraphEdge*, SetElement*> inputElements;
+		std::unordered_map<GraphEdge*, SetElement*> outputElements;
+		for (GraphEdge* edge : inputs) 
+		{
+			allElements.push_back(new SetElement({edge, true}));
+			inputElements[edge] = allElements.back();
+		}
+		for (GraphEdge* edge : outputs) 
+		{
+			allElements.push_back(new SetElement({edge, false}));
+			outputElements[edge] = allElements.back();
+		}
+
+		//grouping edges if they are connected by reads
+		for (GraphEdge* inEdge : inputs)
+		{
+			for (auto outEdge : readSupport[inEdge])
+			{
+				if (outEdge.second >= MIN_JCT_SUPPORT)
+				{
+					unionSet(inputElements[inEdge], 
+							 outputElements[outEdge.first]);
+				}
+			}
+		}
+
+		auto clusters = groupBySet(allElements);
+		/*if (clusters.size() > 1)
+		{
+			Logger::get().debug() << "Split edge mult:" 
+				<< inputs.size() << "len: " << pathToResolve.length
+				<< " cov: " << pathToResolve.meanCoverage 
+				<< " clusters: " << clusters.size();
+			for (auto& cl : clusters)
+			{
+				Logger::get().debug() << "\tCl: " << cl.second.size();
+				for (auto edgeDir : cl.second)
+				{
+					Logger::get().debug() << "\t\t" << edgeDir.edge->edgeId.signedId() << " " 
+						<< edgeDir.edge->length() << " " << edgeDir.edge->meanCoverage 
+						<< " " << edgeDir.isEntrance;
+				}
+			}
+		}*/
+		for (auto& cl : clusters)
+		{
+			if (cl.second.size() == 2)
+			{
+				GraphEdge* inputConn = cl.second[0].edge;
+				GraphEdge* outputConn = cl.second[1].edge;
+				if (!cl.second[0].isEntrance)
+				{
+					std::swap(inputConn, outputConn);
+				}
+
+				//Logger::get().debug() << "From " << inputConn->edgeId.signedId()
+				//	<< " to " << outputConn->edgeId.signedId()
+				//	<< " " << bridgingReads[inputConn].count(outputConn);
+				GraphPath connPath;
+				connPath.push_back(inputConn);
+				connPath.insert(connPath.end(), pathToResolve.path.begin(), 
+								pathToResolve.path.end());
+				connPath.push_back(outputConn);
+				resolvedConnections.push_back({connPath, 
+											   bridgingReads[inputConn][outputConn],
+											   /*flnak len*/ 0});
+
+				Logger::get().debug() << "\tConnection " 
+					<< inputConn->edgeId.signedId() << "\t" 
+					<< outputConn->edgeId.signedId() << "\t"
+					<< readSupport[inputConn][outputConn];
+			}
+		}
+	}
+
+	//separate repeats on the graph
+	for (auto& conn : resolvedConnections)
+	{
+				FastaRecord::Id edgeId = _graph.newEdgeId();
+
+		std::stringstream ss;
+		ss << "edge_" << edgeId.signedId() << "_0_" 
+			<< _readSeqs.getRecord(conn.readSeq.readId).description << "_"
+			<< conn.readSeq.start << "_" << conn.readSeq.end;
+		EdgeSequence edgeSeq = 
+			_graph.addEdgeSequence(_readSeqs.getSeq(conn.readSeq.readId),
+								   conn.readSeq.start, conn.readSeq.length(),
+								   ss.str());
+
+		this->separatePath(conn.path, edgeSeq, edgeId);
+		this->separatePath(_graph.complementPath(conn.path), 
+						    edgeSeq.complement(), edgeId.rc());
+	}
+
+	Logger::get().debug() << "[SIMPL] Resolved " << resolvedConnections.size() 
+		<< " simple repeats";
+	_aligner.updateAlignments();
+	return resolvedConnections.size();
+}
+
+//Given the path in the graph with a resolved repeat inside,
+//separates in into a single unbranching path. The first
+//and the last edges of the graphPath parameter
+//should correspond to the flanking unique edges
+void RepeatResolver::separatePath(const GraphPath& graphPath, 
+							   	  EdgeSequence readSegment, 
+							   	  FastaRecord::Id newId)
+{
+	//first edge
+	GraphNode* leftNode = _graph.addNode();
+	vecRemove(graphPath.front()->nodeRight->inEdges, graphPath.front());
+	graphPath.front()->nodeRight = leftNode;
+	leftNode->inEdges.push_back(graphPath.front());
+	int32_t pathCoverage = (graphPath.front()->meanCoverage +
+						    graphPath.back()->meanCoverage) / 2;
+
+	//repetitive edges in the middle
+	for (size_t i = 1; i < graphPath.size() - 1; ++i)
+	{
+		graphPath[i]->resolved = true;
+		_substractedCoverage[graphPath[i]] += pathCoverage;
+		//graphPath[i]->substractedCoverage += pathCoverage;
+	}
+
+	GraphNode* rightNode = leftNode;
+	if (graphPath.size() > 2)
+	{
+		rightNode = _graph.addNode();
+		GraphEdge* newEdge = _graph.addEdge(GraphEdge(leftNode, rightNode,
+													 newId));
+		newEdge->seqSegments.push_back(readSegment);
+		newEdge->meanCoverage = pathCoverage;
+	}
+
+	//last edge
+	vecRemove(graphPath.back()->nodeLeft->outEdges, graphPath.back());
+	graphPath.back()->nodeLeft = rightNode;
+	rightNode->outEdges.push_back(graphPath.back());
+}
+

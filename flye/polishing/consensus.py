@@ -6,19 +6,25 @@
 Quick and dirty alignment consensus
 """
 
+from __future__ import absolute_import
+from __future__ import division
 import logging
 from collections import defaultdict
-from itertools import izip
+from flye.six.moves import range
+from flye.six import itervalues
+
 import multiprocessing
 import signal
 
-from flye.polishing.alignment import shift_gaps, SynchronizedSamReader, get_uniform_alignments
+from flye.polishing.alignment import shift_gaps, get_uniform_alignments
+from flye.utils.sam_parser import SynchronizedSamReader
 import flye.config.py_cfg as cfg
 import flye.utils.fasta_parser as fp
+from flye.six.moves import zip
 
 logger = logging.getLogger()
 
-class Profile:
+class Profile(object):
     __slots__ = ("insertions", "matches", "nucl")
 
     def __init__(self):
@@ -29,8 +35,6 @@ class Profile:
 def _thread_worker(aln_reader, contigs_info, platform, results_queue,
                    error_queue):
     try:
-        aln_reader.init_reading()
-
         while not aln_reader.is_eof():
             ctg_id, ctg_aln = aln_reader.get_chunk()
             if ctg_id is None:
@@ -40,8 +44,6 @@ def _thread_worker(aln_reader, contigs_info, platform, results_queue,
                                                   contigs_info[ctg_id].length)
             sequence = _flatten_profile(profile)
             results_queue.put((ctg_id, sequence, aln_errors))
-
-        aln_reader.stop_reading()
 
     except Exception as e:
         error_queue.put(e)
@@ -63,7 +65,7 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
     #making sure the main process catches SIGINT
     orig_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     threads = []
-    for _ in xrange(num_proc):
+    for _ in range(num_proc):
         threads.append(multiprocessing.Process(target=_thread_worker,
                                                args=(aln_reader, contigs_info,
                                                      platform, results_queue,
@@ -87,6 +89,7 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
 
     if not error_queue.empty():
         raise error_queue.get()
+    aln_reader.close()
 
     out_fasta = {}
     total_aln_errors = []
@@ -96,8 +99,8 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
         if len(ctg_seq) > 0:
             out_fasta[ctg_id] = ctg_seq
 
-    mean_aln_error = float(sum(total_aln_errors)) / (len(total_aln_errors) + 1)
-    logger.info("Alignment error rate: {0}".format(mean_aln_error))
+    mean_aln_error = sum(total_aln_errors) / (len(total_aln_errors) + 1)
+    logger.info("Alignment error rate: %f", mean_aln_error)
 
     return out_fasta
 
@@ -111,7 +114,7 @@ def _contig_profile(alignment, platform, genome_len):
     alignment = get_uniform_alignments(alignment, genome_len)
 
     aln_errors = []
-    profile = [Profile() for _ in xrange(genome_len)]
+    profile = [Profile() for _ in range(genome_len)]
     #max_aln_err = cfg.vals["err_modes"][platform]["max_aln_error"]
     for aln in alignment:
         #if aln.err_rate > max_aln_err: continue
@@ -123,7 +126,7 @@ def _contig_profile(alignment, platform, genome_len):
         trg_seq = shift_gaps(qry_seq, aln.trg_seq)
 
         trg_pos = aln.trg_start
-        for trg_nuc, qry_nuc in izip(trg_seq, qry_seq):
+        for trg_nuc, qry_nuc in zip(trg_seq, qry_seq):
             if trg_nuc == "-":
                 trg_pos -= 1
             if trg_pos >= genome_len:
@@ -157,21 +160,22 @@ def _flatten_profile(profile):
         pos_nucl = elem.nucl
 
         ins_group.clear()
-        for ins_str in pos_insertions.values():
+        for ins_str in itervalues(pos_insertions):
             ins_group[ins_str] += 1
 
-        coverage = sum(pos_matches.values())
+        match_and_del_num = sum(itervalues(pos_matches))
+        num_ins = len(pos_insertions)
 
         max_match = pos_nucl
         if len(pos_matches):
-            max_match = max(pos_matches, key=pos_matches.get)
+            max_match = max(sorted(pos_matches), key=pos_matches.get)
         max_insert = None
         if ins_group:
-            max_insert = max(ins_group, key=ins_group.get)
+            max_insert = max(sorted(ins_group), key=ins_group.get)
 
         if max_match != "-":
             growing_seq.append(max_match)
-        if max_insert and max_insert != "-" and ins_group[max_insert] > coverage / 2:
+        if max_insert and max_insert != "-" and num_ins > match_and_del_num // 2:
             growing_seq.append(max_insert)
 
     return "".join(growing_seq)

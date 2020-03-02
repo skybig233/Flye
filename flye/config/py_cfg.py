@@ -6,6 +6,7 @@
 Configuration file for the Python part of the pipeline
 """
 
+from __future__ import absolute_import
 import os
 
 vals = {
@@ -39,6 +40,7 @@ vals = {
         "max_bubble_length" : 500,
         "max_bubble_branches" : 50,
         "max_read_coverage" : 1000,
+        "min_polish_aln_len" : 500,
 
         #final coverage filtering
         "relative_minimum_coverage" : 5,
@@ -57,7 +59,7 @@ vals = {
                 "hopo_matrix" : "config/bin_cfg/nano_r94_homopolymers.mat",
                 "solid_missmatch" : 0.3,
                 "solid_indel" : 0.3,
-                "max_aln_error" : 0.3
+                "max_aln_error" : 0.25
             },
         },
 
