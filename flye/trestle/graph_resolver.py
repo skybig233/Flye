@@ -198,47 +198,85 @@ def _get_connections(trestle_results):
 
 
 class UniqueInfo:
-    __slots__ = ("id", "path", "all_reads", "sequences")
+    __slots__ = ("id", "path", "all_reads", "in_reads", "out_reads",
+                 "sequences", "overlap_edges")
 
-    def __init__(self, id, path, all_reads, sequences):
+    def __init__(self, id, repeat_path, all_reads, in_reads, out_reads,
+                 sequences):
         self.id = id
-        self.path = path
+        self.repeat_path = repeat_path
         self.all_reads = all_reads
+        self.in_reads = in_reads
+        self.out_reads = out_reads
         self.sequences = sequences
-
 
 def get_unique_edges(repeat_graph, alignments, edge_seqs):
     next_path_id = 1
     path_ids = {}
-    unique_dict = {}
+    uniques_dict = {}
 
+    print "Here 1"
     for path in repeat_graph.get_unbranching_paths():
         if path[0].repetitive or path[0].self_complement:
             continue
-
+        #if next_path_id == 1:
+        #    print path[0].node_left, path[0].node_left.in_edges, path[0].node_left.out_edges
+        #    print path[0].node_right, path[0].node_right.in_edges, path[0].node_right.out_edges
+        #print "Here 2"
+        inputs = set()
+        for in_edge in path[0].node_left.in_edges:
+            inputs.add(in_edge.edge_id)
+        outputs = set()
+        for out_edge in path[-1].node_right.out_edges:
+            outputs.add(out_edge.edge_id)
+        #print "Here 3"
         if path[0].edge_id not in path_ids:
             path_ids[path[0].edge_id] = next_path_id
             path_ids[-path[-1].edge_id] = -next_path_id
             next_path_id += 1
-        path_id = path_ids[path[0].edge_id]
+        if path[0].edge_id in path_ids:
+            path_id = path_ids[path[0].edge_id]
+        else:
+            print "edge_id not in path_ids", path[0].edge_id
         unique_edge_ids = set(map(lambda e: e.edge_id, path))
-        
+        #print "Here 4"
+        #print "path_id", path_id
         inner_reads = []
+        input_reads = defaultdict(list)
+        output_reads = defaultdict(list)
         for read_aln in alignments:
-            unique_read = False
+            repeat_read = False
             for edge_aln in read_aln:
                 if edge_aln.edge_id in unique_edge_ids:
-                    unique_read = True
-            if not unique_read:
+                    repeat_read = True
+            if not repeat_read:
                 continue
-
             inner_reads.append(read_aln[0].overlap.cur_id)
+            for prev_edge, next_edge in izip(read_aln[:-1], read_aln[1:]):
+                if (prev_edge.edge_id in inputs and
+                        next_edge.edge_id == path[0].edge_id):
+                    input_reads[prev_edge.edge_id].append(prev_edge.overlap.cur_id)
+                    #print prev_edge.edge_id, "added to input_reads"
+
+                if (prev_edge.edge_id == path[-1].edge_id and
+                        next_edge.edge_id in outputs):
+                    output_reads[next_edge.edge_id].append(next_edge.overlap.cur_id)
+                    #print next_edge, "added to output_reads"
 
         if not len(inner_reads):
             continue
-
+        #print "Here 6"
         #add edges sequences:
         sequences = {}
+        for edge in chain(input_reads, output_reads):
+            #print "check", edge in repeat_graph.edges
+            seq_id = repeat_graph.edges[edge].edge_sequences[0].edge_seq_name
+            #print "check 2", seq_id[1:] in edge_seqs
+            seq = edge_seqs[seq_id[1:]]
+            if seq_id[0] == "-":
+                seq = fp.reverse_complement(seq)
+            sequences[edge] = seq
+        #print "Here 7"
         template_seq = ""
         for edge in path:
             seq_id = edge.edge_sequences[0].edge_seq_name
@@ -247,15 +285,16 @@ def get_unique_edges(repeat_graph, alignments, edge_seqs):
                 seq = fp.reverse_complement(seq)
             template_seq += seq
         sequences["template"] = template_seq
-
+        #print "Here 8"
         #print path_id
         #for h, s in sequences.items():
         #    print h, s[:100]
-
-        unique_dict[path_id] = UniqueInfo(path_id, map(lambda e: e.edge_id, path),
-                                           inner_reads, sequences)
-
-    return unique_dict
+        
+        uniques_dict[path_id] = UniqueInfo(path_id, map(lambda e: e.edge_id, path),
+                                           inner_reads, input_reads, output_reads, 
+                                           sequences)
+    print len(uniques_dict)
+    return uniques_dict, path_ids
 
 
 def dump_uniques(uniques_info, filename):
@@ -267,3 +306,15 @@ def dump_uniques(uniques_info, filename):
             for read in info.all_reads:
                 f.write(read + "\n")
             f.write("\n")
+            
+            for in_edge in info.in_reads:
+                f.write("#Input {0}\t{1}\n".format(in_edge, len(info.in_reads[in_edge])))
+                for read in info.in_reads[in_edge]:
+                    f.write(read + "\n")
+                f.write("\n")
+
+            for out_edge in info.out_reads:
+                f.write("#Output {0}\t{1}\n".format(out_edge, len(info.out_reads[out_edge])))
+                for read in info.out_reads[out_edge]:
+                    f.write(read + "\n")
+                f.write("\n")

@@ -27,6 +27,7 @@ from flye.config.configurator import setup_params
 from flye.utils.bytes2human import human2bytes
 import flye.utils.fasta_parser as fp
 import flye.short_plasmids.plasmids as plas
+import flye.trestle.haploidy as hap
 import flye.trestle.trestle as tres
 import flye.trestle.phase as phase
 import flye.trestle.graph_resolver as tres_graph
@@ -127,7 +128,7 @@ class JobShortPlasmidsAssembly(Job):
 
         self.args = args
         self.work_dir = work_dir
-        self.work_dir = os.path.join(work_dir, "22-plasmids")
+        self.work_dir = os.path.join(work_dir, "24-plasmids")
         self.contigs_path = contigs_file
         self.repeat_graph = repeat_graph
         self.graph_edges = graph_edges
@@ -175,6 +176,19 @@ class JobRepeat(Job):
                                                          "read_alignment_dump")
         #self.out_files["repeats_dump"] = os.path.join(self.work_dir,
         #                                              "repeats_dump")
+        #Add out_files to the before repeat resolution graph
+        self.out_files["before_coll_repeat_graph"] = os.path.join(self.work_dir,
+                                                      "before_coll_repeat_graph_dump")
+        self.out_files["before_coll_repeat_graph_edges"] = os.path.join(self.work_dir,
+                                                        "before_coll_repeat_graph_edges.fasta")
+        self.out_files["before_coll_reads_alignment"] = os.path.join(self.work_dir,
+                                                         "before_coll_read_alignment_dump")
+        self.out_files["before_rr_repeat_graph"] = os.path.join(self.work_dir,
+                                                      "before_rr_repeat_graph_dump")
+        self.out_files["before_rr_repeat_graph_edges"] = os.path.join(self.work_dir,
+                                                        "before_rr_repeat_graph_edges.fasta")
+        self.out_files["before_rr_reads_alignment"] = os.path.join(self.work_dir,
+                                                         "before_rr_read_alignment_dump")
 
     def run(self):
         super(JobRepeat, self).run()
@@ -331,7 +345,7 @@ class JobTrestle(Job):
         super(JobTrestle, self).__init__()
 
         self.args = args
-        self.work_dir = os.path.join(work_dir, "21-trestle")
+        self.work_dir = os.path.join(work_dir, "22-trestle")
         self.log_file = log_file
         #self.repeats_dump = repeats_dump
         self.graph_edges = graph_edges
@@ -377,6 +391,68 @@ class JobTrestle(Job):
         fp.write_fasta_dict(repeat_graph.edges_fasta,
                             self.out_files["repeat_graph_edges"])
 
+class JobHaploidy(Job):
+    def __init__(self, args, work_dir, log_file, repeat_graph,
+                 graph_edges, reads_alignment_file, coll_lab):
+        super(JobHaploidy, self).__init__()
+
+        self.args = args
+        if coll_lab == 0:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-before-coll")
+        elif coll_lab == 1:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-before-rr")
+        elif coll_lab == 2:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-after-rr")
+        self.log_file = log_file
+        #self.repeats_dump = repeats_dump
+        self.graph_edges = graph_edges
+        self.repeat_graph = repeat_graph
+        self.reads_alignment_file = reads_alignment_file
+
+        self.name = "haploidy"
+        self.out_files["repeat_graph"] = os.path.join(self.work_dir,
+                                                      "repeat_graph_dump")
+        self.out_files["repeat_graph_edges"] = \
+            os.path.join(self.work_dir, "repeat_graph_edges.fasta")
+
+    def run(self):
+        super(JobHaploidy, self).run()
+
+        if not os.path.isdir(self.work_dir):
+            os.mkdir(self.work_dir)
+
+        summary_file = os.path.join(self.work_dir, "hap_summary.txt")
+        hap_seqs = os.path.join(self.work_dir, "hap_seqs.fasta")
+        logger.debug("Haploidy running")
+        repeat_graph = RepeatGraph(fp.read_sequence_dict(self.graph_edges))
+        logger.debug("Read repeat graph")
+        repeat_graph.load_from_file(self.repeat_graph)
+        logger.debug("Loaded repeat graph")
+        reads_alignment = parse_alignments(self.reads_alignment_file)
+        logger.debug("Parsed alignments")
+
+        try:
+            uniques_info, path_ids = tres_graph \
+                .get_unique_edges(repeat_graph, reads_alignment,
+                                    fp.read_sequence_dict(self.graph_edges))
+            logger.debug("Got unique edges")
+            tres_graph.dump_uniques(uniques_info,
+                                    os.path.join(self.work_dir, "uniques_dump"))
+            logger.debug("Dumped uniques")
+            hap.classify_haploids(self.args, self.work_dir, uniques_info, path_ids,
+                                summary_file, hap_seqs)
+            logger.debug("Classified haploids")
+            #tres_graph.apply_changes(repeat_graph, summary_file,
+            #                         fp.read_sequence_dict(phased_seqs))
+        except Exception as e:
+            logger.warning("Caught unhandled exception: " + str(e))
+            logger.warning("Continuing to the next pipeline stage. "
+                           "Please submit a bug report along with the full log file")
+
+        #repeat_graph.dump_to_file(self.out_files["repeat_graph"])
+        #fp.write_fasta_dict(repeat_graph.edges_fasta,
+        #                    self.out_files["repeat_graph_edges"])
+
 
 class JobPhase(Job):
     def __init__(self, args, work_dir, log_file, repeat_graph,
@@ -410,7 +486,7 @@ class JobPhase(Job):
         reads_alignment = parse_alignments(self.reads_alignment_file)
 
         try:
-            uniques_info = tres_graph \
+            uniques_info, path_ids = tres_graph \
                 .get_unique_edges(repeat_graph, reads_alignment,
                                     fp.read_sequence_dict(self.graph_edges))
             tres_graph.dump_uniques(uniques_info,
@@ -459,7 +535,25 @@ def _create_job_list(args, work_dir, log_file):
     repeat_graph_edges = jobs[-1].out_files["repeat_graph_edges"]
     repeat_graph = jobs[-1].out_files["repeat_graph"]
     reads_alignment = jobs[-1].out_files["reads_alignment"]
+    before_coll_repeat_graph_edges = jobs[-1].out_files["before_coll_repeat_graph_edges"]
+    before_coll_repeat_graph = jobs[-1].out_files["before_coll_repeat_graph"]
+    before_coll_reads_alignment = jobs[-1].out_files["before_coll_reads_alignment"]
+    before_rr_repeat_graph_edges = jobs[-1].out_files["before_rr_repeat_graph_edges"]
+    before_rr_repeat_graph = jobs[-1].out_files["before_rr_repeat_graph"]
+    before_rr_reads_alignment = jobs[-1].out_files["before_rr_reads_alignment"]
+    
+    if args.hap:
+        jobs.append(JobHaploidy(args, work_dir, log_file,
+                    before_coll_repeat_graph, before_coll_repeat_graph_edges,
+                    before_coll_reads_alignment, False))
+        jobs.append(JobHaploidy(args, work_dir, log_file,
+                    before_rr_repeat_graph, before_rr_repeat_graph_edges,
+                    before_rr_reads_alignment, True))
+        jobs.append(JobHaploidy(args, work_dir, log_file,
+                    repeat_graph, repeat_graph_edges,
+                    reads_alignment, True))
 
+    
     #Trestle: Resolve Unbridged Repeats
     if not args.no_trestle and not args.meta and args.read_type == "raw":
         jobs.append(JobTrestle(args, work_dir, log_file,
@@ -505,7 +599,7 @@ def _create_job_list(args, work_dir, log_file):
     jobs.append(JobFinalize(args, work_dir, log_file, contigs_file,
                             graph_file, repeat_stats, polished_stats,
                             polished_gfa, scaffold_links))
-
+    
     return jobs
 
 
@@ -691,6 +785,9 @@ def main():
     parser.add_argument("--phase", action="store_true",
                         dest="phase", default=False,
                         help="phase haplotypes")
+    parser.add_argument("--hap", action="store_true",
+                        dest="hap", default=False,
+                        help="check and collapse haploidy")
     parser.add_argument("--resume", action="store_true",
                         dest="resume", default=False,
                         help="resume from the last completed stage")

@@ -175,6 +175,13 @@ int main(int argc, char** argv)
 	multInf.estimateCoverage();
 	multInf.removeUnsupportedEdges();
 	multInf.removeUnsupportedConnections();
+	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_coll.gv");
+	rg.storeGraph(outFolder + "/before_coll_repeat_graph_dump");
+	aligner.storeAlignments(outFolder + "/before_coll_read_alignment_dump");
+	SequenceContainer::writeFasta(edgeSequences.iterSeqs(), 
+								  outFolder + "/before_coll_repeat_graph_edges.fasta",
+								  /*only pos strand*/ true);
+
 
 	//for diploid genomes, turned off by default
 	multInf.collapseHeterozygousLoops();
@@ -188,6 +195,12 @@ int main(int argc, char** argv)
 	//outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gfa");
 	outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_before_rr.fasta");
 	//outGen.detailedFasta(outFolder + "/before_rr_detailed.fasta");
+	rg.storeGraph(outFolder + "/before_rr_repeat_graph_dump");
+	aligner.storeAlignments(outFolder + "/before_rr_read_alignment_dump");
+	SequenceContainer::writeFasta(edgeSequences.iterSeqs(), 
+								  outFolder + "/before_rr_repeat_graph_edges.fasta",
+								  /*only pos strand*/ true);
+
 
 	resolver.resolveRepeats();
 	resolver.finalizeGraph();
