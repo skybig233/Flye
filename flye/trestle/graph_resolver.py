@@ -6,24 +6,28 @@
 Modifies repeat graph using the Tresle output
 """
 
+from __future__ import absolute_import
 import logging
-from itertools import izip, chain
+from itertools import chain
 from collections import defaultdict
 
 import flye.utils.fasta_parser as fp
+from flye.repeat_graph.graph_alignment import iter_alignments
+from flye.six import iteritems
+from flye.six.moves import zip
 
 logger = logging.getLogger()
 
 
-class Connection:
+class Connection(object):
     __slots__ = ("id", "path", "sequence")
-    def __init__(self, id=None, path=[], sequence=""):
+    def __init__(self, id=None, path=None, sequence=""):
         self.id = id
         self.path = path
         self.sequence = sequence
 
 
-class RepeatInfo:
+class RepeatInfo(object):
     __slots__ = ("id", "repeat_path", "all_reads", "in_reads", "out_reads",
                  "sequences", "multiplicity")
 
@@ -38,12 +42,14 @@ class RepeatInfo:
         self.multiplicity = multiplicity
 
 
-def get_simple_repeats(repeat_graph, alignments, edge_seqs):
+def get_simple_repeats(repeat_graph, alignments_file, edge_seqs):
     next_path_id = 1
     path_ids = {}
     repeats_dict = {}
     MULT = 2
 
+    paths_to_resolve = []
+    interesting_edges = set()
     for path in repeat_graph.get_unbranching_paths():
         if not path[0].repetitive or path[0].self_complement:
             continue
@@ -64,17 +70,30 @@ def get_simple_repeats(repeat_graph, alignments, edge_seqs):
         if not is_simple or len(inputs) != MULT or len(outputs) != MULT:
             continue
 
+        paths_to_resolve.append((path, inputs, outputs))
+        interesting_edges.update(set([e.edge_id for e in path]))
+
+    interesting_alignments = []
+    for read_aln in iter_alignments(alignments_file):
+        repeat_read = False
+        for edge_aln in read_aln:
+            if edge_aln.edge_id in interesting_edges:
+                repeat_read = True
+        if repeat_read:
+            interesting_alignments.append(read_aln)
+
+    for path, inputs, outputs in paths_to_resolve:
         if path[0].edge_id not in path_ids:
             path_ids[path[0].edge_id] = next_path_id
             path_ids[-path[-1].edge_id] = -next_path_id
             next_path_id += 1
         path_id = path_ids[path[0].edge_id]
 
-        repeat_edge_ids = set(map(lambda e: e.edge_id, path))
+        repeat_edge_ids = set([e.edge_id for e in path])
         inner_reads = []
         input_reads = defaultdict(list)
         output_reads = defaultdict(list)
-        for read_aln in alignments:
+        for read_aln in interesting_alignments:
             repeat_read = False
             for edge_aln in read_aln:
                 if edge_aln.edge_id in repeat_edge_ids:
@@ -83,7 +102,7 @@ def get_simple_repeats(repeat_graph, alignments, edge_seqs):
                 continue
 
             inner_reads.append(read_aln[0].overlap.cur_id)
-            for prev_edge, next_edge in izip(read_aln[:-1], read_aln[1:]):
+            for prev_edge, next_edge in zip(read_aln[:-1], read_aln[1:]):
                 if (prev_edge.edge_id in inputs and
                         next_edge.edge_id == path[0].edge_id):
                     input_reads[prev_edge.edge_id].append(prev_edge.overlap.cur_id)
@@ -118,7 +137,7 @@ def get_simple_repeats(repeat_graph, alignments, edge_seqs):
         #for h, s in sequences.items():
         #    print h, s[:100]
 
-        repeats_dict[path_id] = RepeatInfo(path_id, map(lambda e: e.edge_id, path),
+        repeats_dict[path_id] = RepeatInfo(path_id, [e.edge_id for e in path],
                                            inner_reads, input_reads, output_reads,
                                            sequences, MULT)
 
@@ -127,7 +146,7 @@ def get_simple_repeats(repeat_graph, alignments, edge_seqs):
 
 def dump_repeats(repeats_info, filename):
     with open(filename, "w") as f:
-        for repeat_id, info in repeats_info.iteritems():
+        for repeat_id, info in iteritems(repeats_info):
             f.write("#Repeat {0}\t{1}\n\n".format(repeat_id, info.multiplicity))
 
             f.write("#All reads\t{0}\n".format(len(info.all_reads)))
@@ -154,6 +173,11 @@ def apply_changes(repeat_graph, trestle_results,
     connections = _get_connections(trestle_results)
     edges_to_remove = set()
     for conn in connections:
+
+        #FIXME: sometimes trestle outputs empty resolved seque. need a proper fix later
+        if not len(resolved_repeats_fasta[conn.sequence]):
+            continue
+
         repeat_graph.separate_path(conn.path, conn.id,
                                    resolved_repeats_fasta[conn.sequence])
         edges_to_remove.update(conn.path[1:-1])
@@ -178,7 +202,7 @@ def _get_connections(trestle_results):
             if bridged == "True" and abs(repeat_id) not in resolved_repeats:
                 resolved_repeats.add(abs(repeat_id))
 
-                repeat_path = map(int, tokens[1].split(","))
+                repeat_path = [int(x) for x in tokens[1].split(",")]
                 res_1, res_2 = tokens[10].split(":")
                 in_1, out_1 = res_1.split(",")
                 in_2, out_2 = res_2.split(",")
@@ -187,8 +211,8 @@ def _get_connections(trestle_results):
                 connection_1 = [int(in_1)] + repeat_path + [int(out_1)]
                 connection_2 = [int(in_2)] + repeat_path + [int(out_2)]
 
-                logger.debug("Repeat {0}: {1}, {2}"
-                    .format(repeat_id, connection_1, connection_2))
+                logger.debug("Repeat %s: %s, %s", repeat_id,
+                             connection_1, connection_2)
 
                 new_seq_id = "trestle_resolved_" + str(repeat_id) + "_copy_"
                 connections.extend([Connection(new_seq_id + "1", connection_1, seq_1),
@@ -252,7 +276,7 @@ def get_unique_edges(repeat_graph, alignments, edge_seqs):
             if not repeat_read:
                 continue
             inner_reads.append(read_aln[0].overlap.cur_id)
-            for prev_edge, next_edge in izip(read_aln[:-1], read_aln[1:]):
+            for prev_edge, next_edge in zip(read_aln[:-1], read_aln[1:]):
                 if (prev_edge.edge_id in inputs and
                         next_edge.edge_id == path[0].edge_id):
                     input_reads[prev_edge.edge_id].append(prev_edge.overlap.cur_id)
@@ -293,7 +317,7 @@ def get_unique_edges(repeat_graph, alignments, edge_seqs):
         uniques_dict[path_id] = UniqueInfo(path_id, map(lambda e: e.edge_id, path),
                                            inner_reads, input_reads, output_reads, 
                                            sequences)
-    print len(uniques_dict)
+    print(len(uniques_dict))
     return uniques_dict, path_ids
 
 

@@ -6,14 +6,15 @@
 Runs repeat/contigger binary
 """
 
+from __future__ import absolute_import
 import subprocess
 import logging
 import os
 
 from flye.utils.utils import which
 
-REPEAT_BIN = "flye-repeat"
-CONTIGGER_BIN = "flye-contigger"
+REPEAT_BIN = "flye-modules"
+CONTIGGER_BIN = "flye-modules"
 logger = logging.getLogger()
 
 
@@ -23,11 +24,11 @@ class RepeatException(Exception):
 
 def check_binaries():
     if not which(REPEAT_BIN) or not which(CONTIGGER_BIN):
-        raise RepeatException("Repeat/contgger binaries were not found. "
+        raise RepeatException("Repeat/contigger binaries were not found. "
                               "Did you run 'make'?")
     try:
         devnull = open(os.devnull, "w")
-        subprocess.check_call([REPEAT_BIN, "-h"], stderr=devnull)
+        subprocess.check_call([REPEAT_BIN, "repeat", "-h"], stderr=devnull)
     except subprocess.CalledProcessError as e:
         raise RepeatException(str(e))
     except OSError as e:
@@ -38,17 +39,18 @@ def analyse_repeats(args, run_params, input_assembly, out_folder,
                     log_file, config_file):
     logger.debug("-----Begin repeat analyser log------")
 
-    cmdline = [REPEAT_BIN, "-l", log_file, "-t", str(args.threads)]
-    if args.min_overlap is not None:
-        cmdline.extend(["-v", str(args.min_overlap)])
+    cmdline = [REPEAT_BIN, "repeat", "--disjointigs", input_assembly,
+               "--reads", ",".join(args.reads), "--out-dir", out_folder,
+               "--config", config_file, "--log", log_file,
+               "--threads", str(args.threads)]
     if args.debug:
-        cmdline.append("-d")
+        cmdline.append("--debug")
     if args.meta:
-        cmdline.append("-u")
-    cmdline.extend(["-v", str(run_params["min_overlap"])])
-    cmdline.extend(["-k", str(run_params["kmer_size"])])
-    cmdline.extend([input_assembly, ",".join(args.reads),
-                    out_folder, config_file])
+        cmdline.append("--meta")
+    if args.keep_haplotypes:
+        cmdline.append("--keep-haplotypes")
+    cmdline.extend(["--min-ovlp", str(run_params["min_overlap"])])
+    cmdline.extend(["--kmer", str(run_params["kmer_size"])])
 
     try:
         logger.debug("Running: " + " ".join(cmdline))
@@ -61,17 +63,21 @@ def analyse_repeats(args, run_params, input_assembly, out_folder,
         raise RepeatException(str(e))
 
 
-def generate_contigs(args, run_params, input_assembly, out_folder,
+def generate_contigs(args, run_params, graph_edges, out_folder,
                     log_file, config_file, repeat_graph, reads_alignment):
     logger.debug("-----Begin contigger analyser log------")
 
-    cmdline = [CONTIGGER_BIN, "-l", log_file, "-t", str(args.threads)]
+    cmdline = [CONTIGGER_BIN, "contigger", "--graph-edges", graph_edges,
+               "--reads", ",".join(args.reads), "--out-dir", out_folder,
+               "--config", config_file, "--repeat-graph", repeat_graph,
+               "--graph-aln", reads_alignment, "--log", log_file,
+               "--threads", str(args.threads)]
     if args.debug:
-        cmdline.append("-d")
-    cmdline.extend(["-v", str(run_params["min_overlap"])])
-    cmdline.extend(["-k", str(run_params["kmer_size"])])
-    cmdline.extend([input_assembly, ",".join(args.reads),
-                    out_folder, config_file, repeat_graph, reads_alignment])
+        cmdline.append("--debug")
+    if args.keep_haplotypes:
+        cmdline.append("--no-scaffold")
+    cmdline.extend(["--min-ovlp", str(run_params["min_overlap"])])
+    cmdline.extend(["--kmer", str(run_params["kmer_size"])])
 
     try:
         logger.debug("Running: " + " ".join(cmdline))

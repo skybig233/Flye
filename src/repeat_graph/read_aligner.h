@@ -32,10 +32,13 @@ public:
 	void storeAlignments(const std::string& filename);
 	void loadAlignments(const std::string& filename);
 
+	typedef std::unordered_map<GraphEdge*, 
+					   		   std::vector<GraphAlignment>> AlnIndex;
+	AlnIndex makeAlignmentIndex();
+
 private:
 	std::vector<GraphAlignment> 
-		chainReadAlignments(const SequenceContainer& edgeSeqs,
-							const std::vector<EdgeAlignment>& ovlps) const;
+		chainReadAlignments(const std::vector<EdgeAlignment>& ovlps) const;
 
 	std::vector<GraphAlignment> _readAlignments;
 
