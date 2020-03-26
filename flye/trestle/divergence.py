@@ -354,7 +354,6 @@ def _write_div_summary(div_sum_path, sum_header, positions,
         f.write("{0:33}\t{1:.5f}\n".format("Min Window Divergence:",
                                            min_window_div))
 
-<<<<<<< HEAD
 
 def call_conservative_positions(div_freq_file, cons_pos_file, 
                                 sub_thresh, del_thresh, ins_thresh):
@@ -408,11 +407,6 @@ def read_conservative_positions(positions_file):
     except IOError as e:
         raise PositionIOError(e)
     return header, positions
-<<<<<<< HEAD
-=======
-=======
->>>>>>> origin/flye
->>>>>>> bd38587d3f5ed5fcda79c59d4b40aa6e35de159c
 
 class PositionIOError(Exception):
     pass

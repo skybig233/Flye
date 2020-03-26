@@ -13,7 +13,7 @@ import logging
 from itertools import combinations
 import copy
 import multiprocessing, signal
-from sklearn.cluster import AgglomerativeClustering
+#from sklearn.cluster import AgglomerativeClustering
 import numpy as np
 
 import flye.polishing.alignment as flye_aln
