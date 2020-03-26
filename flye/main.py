@@ -440,131 +440,6 @@ class JobTrestle(Job):
         fp.write_fasta_dict(repeat_graph.edges_fasta,
                             self.out_files["repeat_graph_edges"])
 
-class JobHaploidy(Job):
-    def __init__(self, args, work_dir, log_file, repeat_graph,
-                 graph_edges, reads_alignment_file, coll_lab):
-        super(JobHaploidy, self).__init__()
-
-        self.args = args
-        if coll_lab == 0:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-before-coll")
-        elif coll_lab == 1:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-before-rr")
-        elif coll_lab == 2:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-after-rr")
-        self.log_file = log_file
-        #self.repeats_dump = repeats_dump
-        self.graph_edges = graph_edges
-        self.repeat_graph = repeat_graph
-        self.reads_alignment_file = reads_alignment_file
-
-        self.name = "haploidy"
-        self.out_files["repeat_graph"] = os.path.join(self.work_dir,
-                                                      "repeat_graph_dump")
-        self.out_files["repeat_graph_edges"] = \
-            os.path.join(self.work_dir, "repeat_graph_edges.fasta")
-
-    def run(self):
-        super(JobHaploidy, self).run()
-
-        if not os.path.isdir(self.work_dir):
-            os.mkdir(self.work_dir)
-
-        summary_file = os.path.join(self.work_dir, "hap_summary.txt")
-        hap_seqs = os.path.join(self.work_dir, "hap_seqs.fasta")
-        logger.debug("Haploidy running")
-        repeat_graph = RepeatGraph(fp.read_sequence_dict(self.graph_edges))
-        logger.debug("Read repeat graph")
-        repeat_graph.load_from_file(self.repeat_graph)
-        logger.debug("Loaded repeat graph")
-        reads_alignment = parse_alignments(self.reads_alignment_file)
-        logger.debug("Parsed alignments")
-
-        try:
-            uniques_info, path_ids = tres_graph \
-                .get_unique_edges(repeat_graph, reads_alignment,
-                                    fp.read_sequence_dict(self.graph_edges))
-            logger.debug("Got unique edges")
-            tres_graph.dump_uniques(uniques_info,
-                                    os.path.join(self.work_dir, "uniques_dump"))
-            logger.debug("Dumped uniques")
-            hap.classify_haploids(self.args, self.work_dir, uniques_info, path_ids,
-                                summary_file, hap_seqs)
-            logger.debug("Classified haploids")
-            #tres_graph.apply_changes(repeat_graph, summary_file,
-            #                         fp.read_sequence_dict(phased_seqs))
-        except Exception as e:
-            logger.warning("Caught unhandled exception: " + str(e))
-            logger.warning("Continuing to the next pipeline stage. "
-                           "Please submit a bug report along with the full log file")
-
-        #repeat_graph.dump_to_file(self.out_files["repeat_graph"])
-        #fp.write_fasta_dict(repeat_graph.edges_fasta,
-        #                    self.out_files["repeat_graph_edges"])
-
-class JobHaploidy(Job):
-    def __init__(self, args, work_dir, log_file, repeat_graph,
-                 graph_edges, reads_alignment_file, coll_lab):
-        super(JobHaploidy, self).__init__()
-
-        self.args = args
-        if coll_lab == 0:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-before-coll")
-        elif coll_lab == 1:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-before-rr")
-        elif coll_lab == 2:
-            self.work_dir = os.path.join(work_dir, "21-haploidy-after-rr")
-        self.log_file = log_file
-        #self.repeats_dump = repeats_dump
-        self.graph_edges = graph_edges
-        self.repeat_graph = repeat_graph
-        self.reads_alignment_file = reads_alignment_file
-
-        self.name = "haploidy"
-        self.out_files["repeat_graph"] = os.path.join(self.work_dir,
-                                                      "repeat_graph_dump")
-        self.out_files["repeat_graph_edges"] = \
-            os.path.join(self.work_dir, "repeat_graph_edges.fasta")
-
-    def run(self):
-        super(JobHaploidy, self).run()
-
-        if not os.path.isdir(self.work_dir):
-            os.mkdir(self.work_dir)
-
-        summary_file = os.path.join(self.work_dir, "hap_summary.txt")
-        hap_seqs = os.path.join(self.work_dir, "hap_seqs.fasta")
-        logger.debug("Haploidy running")
-        repeat_graph = RepeatGraph(fp.read_sequence_dict(self.graph_edges))
-        logger.debug("Read repeat graph")
-        repeat_graph.load_from_file(self.repeat_graph)
-        logger.debug("Loaded repeat graph")
-        reads_alignment = parse_alignments(self.reads_alignment_file)
-        logger.debug("Parsed alignments")
-
-        try:
-            uniques_info, path_ids = tres_graph \
-                .get_unique_edges(repeat_graph, reads_alignment,
-                                    fp.read_sequence_dict(self.graph_edges))
-            logger.debug("Got unique edges")
-            tres_graph.dump_uniques(uniques_info,
-                                    os.path.join(self.work_dir, "uniques_dump"))
-            logger.debug("Dumped uniques")
-            hap.classify_haploids(self.args, self.work_dir, uniques_info, path_ids,
-                                summary_file, hap_seqs)
-            logger.debug("Classified haploids")
-            #tres_graph.apply_changes(repeat_graph, summary_file,
-            #                         fp.read_sequence_dict(phased_seqs))
-        except Exception as e:
-            logger.warning("Caught unhandled exception: " + str(e))
-            logger.warning("Continuing to the next pipeline stage. "
-                           "Please submit a bug report along with the full log file")
-
-        #repeat_graph.dump_to_file(self.out_files["repeat_graph"])
-        #fp.write_fasta_dict(repeat_graph.edges_fasta,
-        #                    self.out_files["repeat_graph_edges"])
-
-
 class JobPhase(Job):
     def __init__(self, args, work_dir, log_file, repeat_graph,
                  graph_edges, reads_alignment_file):
@@ -594,11 +469,10 @@ class JobPhase(Job):
         phased_seqs = os.path.join(self.work_dir, "phased_copies.fasta")
         repeat_graph = RepeatGraph(fp.read_sequence_dict(self.graph_edges))
         repeat_graph.load_from_file(self.repeat_graph)
-        reads_alignment = parse_alignments(self.reads_alignment_file)
 
         try:
             uniques_info, path_ids = tres_graph \
-                .get_unique_edges(repeat_graph, reads_alignment,
+                .get_unique_edges(repeat_graph, self.reads_alignment_file,
                                     fp.read_sequence_dict(self.graph_edges))
             tres_graph.dump_uniques(uniques_info,
                                     os.path.join(self.work_dir, "uniques_dump"))
@@ -612,6 +486,68 @@ class JobPhase(Job):
             else:
                 logger.info("Skipping 'phase' stage")
             
+        except Exception as e:
+            logger.warning("Caught unhandled exception: " + str(e))
+            logger.warning("Continuing to the next pipeline stage. "
+                           "Please submit a bug report along with the full log file")
+
+        #repeat_graph.dump_to_file(self.out_files["repeat_graph"])
+        #fp.write_fasta_dict(repeat_graph.edges_fasta,
+        #                    self.out_files["repeat_graph_edges"])
+
+
+class JobHaploidy(Job):
+    def __init__(self, args, work_dir, log_file, repeat_graph,
+                 graph_edges, reads_alignment_file, coll_lab):
+        super(JobHaploidy, self).__init__()
+
+        self.args = args
+        if coll_lab == 0:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-before-coll")
+        elif coll_lab == 1:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-before-rr")
+        elif coll_lab == 2:
+            self.work_dir = os.path.join(work_dir, "21-haploidy-after-rr")
+        self.log_file = log_file
+        #self.repeats_dump = repeats_dump
+        self.graph_edges = graph_edges
+        self.repeat_graph = repeat_graph
+        self.reads_alignment_file = reads_alignment_file
+
+        self.name = "haploidy"
+        self.out_files["repeat_graph"] = os.path.join(self.work_dir,
+                                                      "repeat_graph_dump")
+        self.out_files["repeat_graph_edges"] = \
+            os.path.join(self.work_dir, "repeat_graph_edges.fasta")
+
+    def run(self):
+        super(JobHaploidy, self).run()
+
+        if not os.path.isdir(self.work_dir):
+            os.mkdir(self.work_dir)
+
+        summary_file = os.path.join(self.work_dir, "hap_summary.txt")
+        hap_seqs = os.path.join(self.work_dir, "hap_seqs.fasta")
+        logger.debug("Haploidy running")
+        repeat_graph = RepeatGraph(fp.read_sequence_dict(self.graph_edges))
+        logger.debug("Read repeat graph")
+        repeat_graph.load_from_file(self.repeat_graph)
+        logger.debug("Loaded repeat graph")
+        logger.debug("Parsed alignments")
+
+        try:
+            uniques_info, path_ids = tres_graph \
+                .get_unique_edges(repeat_graph, self.reads_alignment_file,
+                                    fp.read_sequence_dict(self.graph_edges))
+            logger.debug("Got unique edges")
+            tres_graph.dump_uniques(uniques_info,
+                                    os.path.join(self.work_dir, "uniques_dump"))
+            logger.debug("Dumped uniques")
+            hap.classify_haploids(self.args, self.work_dir, uniques_info, path_ids,
+                                summary_file, hap_seqs)
+            logger.debug("Classified haploids")
+            #tres_graph.apply_changes(repeat_graph, summary_file,
+            #                         fp.read_sequence_dict(phased_seqs))
         except Exception as e:
             logger.warning("Caught unhandled exception: " + str(e))
             logger.warning("Continuing to the next pipeline stage. "

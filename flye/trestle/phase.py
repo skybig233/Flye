@@ -16,7 +16,7 @@ import multiprocessing, signal
 from sklearn.cluster import AgglomerativeClustering
 
 import flye.polishing.alignment as flye_aln
-from flye.polishing.alignment import Alignment
+from flye.utils.sam_parser import Alignment
 import flye.utils.fasta_parser as fp
 import flye.config.py_cfg as config
 import flye.polishing.polish as pol

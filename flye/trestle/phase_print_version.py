@@ -14,9 +14,9 @@ from itertools import combinations
 import copy
 import multiprocessing, signal
 from sklearn.cluster import AgglomerativeClustering
-import numpy as np
 
 import flye.polishing.alignment as flye_aln
+from flye.polishing.alignment import Alignment
 import flye.utils.fasta_parser as fp
 import flye.config.py_cfg as config
 import flye.polishing.polish as pol
@@ -27,231 +27,6 @@ import flye.trestle.trestle_config as trestle_config
 logger = logging.getLogger()
 
 
-def classify_haploids(args, hap_dir, uniques_dict, path_ids, summary_file, hap_seq_file):
-    print("Start haploid")
-    SUB_THRESH = trestle_config.vals["sub_thresh"]
-    DEL_THRESH = trestle_config.vals["del_thresh"]
-    INS_THRESH = trestle_config.vals["ins_thresh"]
-    MIN_ALN_RATE = trestle_config.vals["min_aln_rate"]
-    #dict from each edge to all other edges in bulge
-    bulge_dict = find_bulge_edges(uniques_dict, path_ids)
-    #polish bool (can try not polishing)
-    polish_on = True
-    print("Got here after bulge_dict")
-    initial_file_names, div_file_names = define_file_names()
-    (edge_label, template_name, initial_reads_name, 
-     left_reads_name, right_reads_name, 
-     reads_template_aln_name) = initial_file_names    
-    div_freq_name, div_pos_name, div_summ_name, cons_pos_name = div_file_names
-    print("got here after file_names")
-    if polish_on:
-        NUM_POL_ITERS = trestle_config.vals["num_pol_iters"]
-        pol_temp_name = "Polishing.Template"
-    
-    reads_dict = get_all_read_seqs(args)
-    print("reads dict done")
-    for edge in sorted(uniques_dict, reverse=True):
-        print("Edge {0}".format(edge))
-        dirs = init_seq_dirs_and_files(args, hap_dir, initial_file_names, 
-                                       uniques_dict, edge, reads_dict)
-        edge_dir, initial_reads_path, template_path = dirs
-        
-        current_template = template_path
-        if polish_on:
-            #Polish template
-            logger.debug("Polishing templates")
-            pol_temp_dir = os.path.join(edge_dir, pol_temp_name)
-            if not os.path.isdir(pol_temp_dir):
-                os.mkdir(pol_temp_dir)
-            polished_template, _stats = \
-                pol.polish(template_path, [initial_reads_path], pol_temp_dir, 
-                           NUM_POL_ITERS, args.threads, args.platform, 
-                           output_progress=False)
-        
-            if not os.path.getsize(polished_template):
-                logger.debug("Polishing failed")
-            else:
-                current_template = polished_template
-        print("polishing done")
-        #3. Find divergent positions
-        logger.debug("Estimating divergence")
-        frequency_path = os.path.join(edge_dir, div_freq_name)
-        position_path = os.path.join(edge_dir, div_pos_name)
-        summary_path = os.path.join(edge_dir, div_summ_name)
-        cons_pos_path = os.path.join(edge_dir, cons_pos_name)
-        
-        #logger.info("running Minimap2")
-        alignment_file = os.path.join(edge_dir, reads_template_aln_name)
-        template_len = 0.0
-        if os.path.getsize(current_template):
-            flye_aln.make_alignment(current_template, [initial_reads_path], 
-                       args.threads, edge_dir, args.platform, 
-                       alignment_file, reference_mode=True, sam_output=True)
-            template_info = flye_aln.get_contigs_info(current_template)
-            template_len = template_info[str(edge)].length
-
-        logger.debug("Finding tentative divergence positions")
-        num_pos = 0
-        div_rate = 0.0
-        if os.path.getsize(current_template):
-            div.find_divergence(alignment_file, current_template, 
-                                template_info, frequency_path, position_path, 
-                                summary_path, MIN_ALN_RATE, 
-                                args.platform, args.threads,
-                                SUB_THRESH, DEL_THRESH, INS_THRESH)
-        
-            pos_headers, pos = div.read_positions(position_path)
-            num_pos = len(pos["total"])
-            div_rate = num_pos / float(template_len)
-            logger.debug("Edge {0}: divergence rate = {1} pos / {2} bp = {3}".format(
-                                edge, num_pos, template_len, div_rate))
-        print("Finished divergence")
-        num_cons_pos = 0
-        cons_div_rate = 0.0
-        if os.path.getsize(frequency_path):
-            cons_sub_thresh = 0.2
-            cons_del_thresh = 0.2
-            cons_ins_thresh = 5.0
-            cov = find_coverage(frequency_path)
-            div.call_conservative_positions(frequency_path, cons_pos_path, 
-                                            cons_sub_thresh, cons_del_thresh, 
-                                            cons_ins_thresh)
-
-            cp_head, cons_pos = div.read_conservative_positions(cons_pos_path)
-            num_cons_pos = len(cons_pos)
-            cons_div_rate = len(cons_pos) / float(template_len)
-            cov_cons_str = " ".join(["Edge {0}:".format(edge), 
-                    "avg aligned cov = {0:.2f}".format(cov),
-                    "conservative div rate = {0} pos / {1} bp = {2}".format(
-                    num_cons_pos, template_len, cons_div_rate)])
-            logger.debug(cov_cons_str)
-        print("got conservative positions")
-        info = uniques_dict[edge]
-        num_in = len(info.in_reads)
-        num_out = len(info.out_reads)
-        logger.debug("In edges:\t{0}\n".format(num_in))
-        for in_edge in info.in_reads:
-            logger.debug("{0}:{1}\n".format(in_edge, info.in_reads[in_edge]))
-        logger.debug("Out edges:\t{0}\n".format(num_out))
-        for out_edge in info.out_reads:
-            logger.debug("{0}:{1}\n".format(out_edge, info.out_reads[out_edge]))
-        logger.debug("Bulge edges:\t{0}\n".format(len(bulge_dict[edge])))
-        print("got to end")
-
-def get_all_read_seqs(args):
-    reads_dict = {}
-    for read_file in args.reads:
-        reads_dict.update(fp.read_sequence_dict(read_file))
-    if not reads_dict:
-        raise ProcessingException("No reads found from {0}".format(args.reads))
-    return reads_dict
-
-def init_seq_dirs_and_files(args,hap_dir, initial_file_names, uniques_dict, 
-                            edge, reads_dict):
-    (edge_label, template_name, initial_reads_name, 
-     left_reads_name, right_reads_name, 
-     reads_template_aln_name) = initial_file_names
-    
-    #Make edge dir
-    edge_dir = os.path.join(hap_dir, edge_label.format(edge))
-    if not os.path.isdir(edge_dir):
-        os.mkdir(edge_dir)
-    
-    template_path = os.path.join(edge_dir, template_name)
-    initial_reads_path = os.path.join(edge_dir, initial_reads_name)
-    all_reads_list = uniques_dict[edge].all_reads
-    
-    template_dict = {}
-    initial_reads_dict = {}
-    
-    template_seq = uniques_dict[edge].sequences["template"]
-    template_dict[edge] = template_seq
-    
-    #rev_comp of read will be written if the header is -h
-    for header in all_reads_list:
-        if (not header) or (header[0] != '+' and header[0] != '-'):
-            raise ProcessingException(
-                "All reads format not recognized: {0}".format(header))
-        if header[1:] not in reads_dict:
-            raise ProcessingException(
-                "Read header {0} not in any of {1}".format(
-                    header[1:], args.reads))
-        
-        seq = reads_dict[header[1:]]
-        if header[0] == '-':
-            seq = fp.reverse_complement(seq)
-        initial_reads_dict[header[1:]] = seq
-    
-    if template_dict and template_dict.values()[0]:
-        fp.write_fasta_dict(template_dict, template_path)
-    if initial_reads_dict and initial_reads_dict.values()[0]:
-        fp.write_fasta_dict(initial_reads_dict, initial_reads_path)
-    
-    if not template_dict:
-        raise ProcessingException("No template {0} found".format(edge))
-    if not initial_reads_dict:
-        raise ProcessingException("No repeat reads {0} found".format(edge))
-    
-    return edge_dir, initial_reads_path, template_path
-
-def find_coverage(frequency_file):
-    coverage = 0.0
-    if os.path.isfile(frequency_file):
-        header, freqs = div.read_frequency_path(frequency_file)
-        cov_ind = header.index("Cov")
-        all_covs = [f[cov_ind] for f in freqs]
-        coverage = np.mean(all_covs)
-        #print min(all_covs), np.mean(all_covs), max(all_covs)
-    return coverage
-
-def find_bulge_edges(uniques_dict, path_ids):
-    bulge_dict = {}
-    for unique_id in uniques_dict:
-        info = uniques_dict[unique_id]
-        if unique_id in bulge_dict:
-            continue
-        bulge_dict[unique_id] = set()
-        for in_edge in info.in_reads:
-            print("in_edge", in_edge, in_edge in uniques_dict)
-            
-            if in_edge in path_ids and path_ids[in_edge] in uniques_dict:
-                print("path_id", path_ids[in_edge], path_ids[in_edge] in uniques_dict)
-                for bulge_edge in uniques_dict[path_ids[in_edge]].out_reads:
-                    bulge_dict[unique_id].add(bulge_edge)
-            else:
-                print("in_edge", in_edge, in_edge in path_ids)
-        for out_edge in info.out_reads:
-            print("out_edge", out_edge, out_edge in uniques_dict)
-            
-            if out_edge in path_ids and path_ids[out_edge] in uniques_dict:
-                print("path_id", path_ids[out_edge], path_ids[out_edge] in uniques_dict)
-                for bulge_edge in uniques_dict[path_ids[out_edge]].in_reads:
-                    bulge_dict[unique_id].add(bulge_edge)
-            else:
-                print("out_edge", out_edge, out_edge in path_ids)
-    return bulge_dict
-
-def define_file_names():
-    #Defining directory and file names for haploidy output
-    
-    edge_label = "edge_{0}"
-    template_name = "template.fasta"
-    initial_reads_name = "initial_reads.fasta"
-    left_reads_name = "left_reads.fasta"
-    right_reads_name = "right_reads.fasta"
-    reads_template_aln_name = "reads.vs.template.minimap.sam"
-    initial_file_names = (edge_label, template_name, initial_reads_name, 
-                          left_reads_name, right_reads_name, 
-                          reads_template_aln_name)
-    
-    div_freq_name = "divergence_frequencies.txt"
-    div_pos_name = "divergent_positions.txt"
-    div_summ_name = "divergence_summary.txt"
-    cons_pos_name = "conservative_divergent_positions.txt"
-    div_file_names = div_freq_name, div_pos_name, div_summ_name, cons_pos_name
-
-    return initial_file_names, div_file_names
-'''
 def test_divergence(args, phasing_dir, uniques_dict):
     SUB_THRESH = trestle_config.vals["sub_thresh"]
     DEL_THRESH = trestle_config.vals["del_thresh"]
@@ -410,6 +185,7 @@ def test_divergence(args, phasing_dir, uniques_dict):
 
 def phase_uniques(args, phasing_dir, uniques_info, summ_file,
                     phased_seqs):
+    print "Here 1"
     all_file_names = define_file_names()
     (pol_dir_names, initial_file_names,
      pre_file_names, div_file_names, aln_names,
@@ -426,6 +202,7 @@ def phase_uniques(args, phasing_dir, uniques_info, summ_file,
     logger.info("Unique edges: {0}".format(len(edge_list)))
     #if not repeat_list:
     #    return
+    print "Here 2"
     #Resolve every repeat in a separate thread
     def _thread_worker(func_args, log_file, results_queue, error_queue):
         try:
@@ -440,10 +217,14 @@ def phase_uniques(args, phasing_dir, uniques_info, summ_file,
             logger.addHandler(file_handler)
 
             result = phase_each_edge(*func_args)
+            print "Here 30"
             results_queue.put(result)
+            print "Here 31"
 
         except Exception as e:
+            print "Here 32"
             error_queue.put(e)
+    print "Here 3"
     job_chunks = [edge_list[i:i + args.threads]
               for i in xrange(0, len(edge_list), args.threads)]
 
@@ -451,6 +232,7 @@ def phase_uniques(args, phasing_dir, uniques_info, summ_file,
         manager = multiprocessing.Manager()
         results_queue = manager.Queue()
         error_queue = manager.Queue()
+        print "Here 4"
         
         phase_threads = max(1, args.threads / len(job_chunk))
         orig_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -460,10 +242,13 @@ def phase_uniques(args, phasing_dir, uniques_info, summ_file,
                          uniques_info, all_file_names, phase_threads)
             log_file = os.path.join(phasing_dir,
                                     "edge_{0}".format(edge_id), "log.txt")
+            print "Here 33, Edge",edge_id
             threads.append(multiprocessing.Process(target=_thread_worker,
                                         args=(func_args, log_file,
                                               results_queue, error_queue)))
+            print "Here 34, Edge", edge_id
         signal.signal(signal.SIGINT, orig_sigint)
+        print "Here 5"
 
         for t in threads:
             t.start()
@@ -480,10 +265,14 @@ def phase_uniques(args, phasing_dir, uniques_info, summ_file,
                                 .format(t.exitcode))
         if not error_queue.empty():
             raise error_queue.get()
+        print "Here 6"
         while not results_queue.empty():
+            print "Here 35, job_chunk",job_chunk
             phased_dict, summary_list = results_queue.get()
             all_phased_dict.update(phased_dict)
             all_summaries.extend(summary_list)
+            print "Here 36, job_chunk",job_chunk
+    print "Here 7"
     fp.write_fasta_dict(all_phased_dict, phased_seqs)
     num_phased = 0
     for summ_items in sorted(all_summaries):
@@ -507,6 +296,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
     zero_it = 0
     side_labels = ["left", "right"]
     phase_labels = [1, 2]
+    print "Here 8"
     
     (pol_dir_names, initial_file_names,
      pre_file_names, div_file_names, aln_names,
@@ -524,6 +314,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
      cut_cons_name, cons_vs_cons_name) = middle_file_names
     (side_stats_name, int_stats_name, int_confirmed_pos_name,
      phased_edge_name, res_vs_res_name) = output_file_names
+    print "Here 9"
     logger.info("Phasing unique edge {0}: {1}" \
         .format(edge_id, uniques_info[edge_id].path))
     edge_dir = os.path.join(phasing_dir,
@@ -539,6 +330,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
     edge_phased = False
     phased_dict = {}
     summary_list = []
+    print "Here 10"
     for orientation, edge in run_orientations:
         logger.debug("Orientation: " + orientation)
         orient_dir = os.path.join(edge_dir, orientation)
@@ -556,6 +348,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         polished_template, _stats = \
             pol.polish(template, [initial_reads], pol_temp_dir, NUM_POL_ITERS,
                        num_threads, args.platform, output_progress=False)
+        print "Here 11"
         if not os.path.getsize(polished_template):
             for side in side_labels:
                 term_bool[side] = True
@@ -578,6 +371,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         else:
             logger.debug("No polished template")
             return phased_dict, summary_list
+        print "Here 12"
         logger.debug("Finding tentative divergence positions")
         div.find_divergence(alignment_file, polished_template, 
                             template_info, frequency_path, position_path, 
@@ -594,6 +388,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         read_endpoints = find_read_endpoints(alignment_file, 
                                              polished_template)
         avg_cov = find_coverage(frequency_path)
+        print "Here 13"
         #4. Initialize paths, variables, and stats
         #pre_partitioning = os.path.join(orient_dir, pre_partitioning_name)
         #pre_phased_reads = os.path.join(orient_dir, pre_phased_reads_name)
@@ -614,7 +409,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         phased_edge_path = os.path.join(orient_dir, phased_edge_name)
         res_vs_res = os.path.join(orient_dir, res_vs_res_name)
         
-        """#5. Re-align reads to extended and initialize partitioning 0
+        '''#5. Re-align reads to extended and initialize partitioning 0
         logger.debug("Checking initial set of phased reads")
         for side in side_labels:
             for edge_id in repeat_edges[rep][side]:
@@ -630,7 +425,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
             init_partitioning(repeat_edges[rep][side], 
                               side, pre_partitioning.format(side), 
                               pre_read_align, polished_extended, 
-                              partitioning.format(zero_it, side))"""
+                              partitioning.format(zero_it, side))'''
         
         #5. Get initial set of read partitions
         #given the alignment of all reads against the genome,
@@ -654,6 +449,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         phase_below_cov = {s:False for s in side_labels}
         dup_part = {s:False for s in side_labels}
         prev_partitionings = {s:set() for s in side_labels}
+        print "Here 14"
         #6. Initialize stats
         for side in side_labels:
             phase_below_cov[side] = init_side_stats(
@@ -666,6 +462,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
         init_int_stats(edge, side_labels, phase_labels, zero_it, position_path, 
                        partitioning, initial_reads, template_len, 
                        avg_cov, integrated_stats)
+        print "Here 15"
         #7. Start iterations
         logger.debug("Iterative procedure")
         for it in range(1, MAX_ITER + 1):
@@ -677,6 +474,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                 else:
                     logger.debug("Iteration {0}, '{1}'".format(it, side))
                     both_break = False
+                print "Here 16"
                 if side == "left":
                     side_reads = left_reads_file
                 elif side == "right":
@@ -693,6 +491,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                 curr_reads)
                     pol_reads_str = "\tPolishing '{0} {1}' reads"
                     logger.debug(pol_reads_str.format(side, phase_id))
+                    print "Here 17"
                     
                     if not os.path.isdir(pol_con_dir):
                         os.mkdir(pol_con_dir)
@@ -700,6 +499,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                         pol.polish(polished_template, [curr_reads], pol_con_dir, 
                                    NUM_POL_ITERS, num_threads, args.platform,
                                    output_progress=False)
+                    print "Here 18"
                     #7b. Cut consensus where coverage drops
                     if side == "left":
                         win_cutpoint = win_end
@@ -725,6 +525,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                            win_cutpoint)
                     else:
                         term_bool[side] = True
+                    print "Here 19"
                     #7c. Align consensuses to template 
                     #    and reads to consensuses
                     if os.path.isfile(curr_cut_cons):
@@ -741,6 +542,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                                 reference_mode=True, sam_output=True)
                     else:
                         term_bool[side] = True
+                print "Here 20"
                 #7d. Partition reads using divergent positions
                 logger.debug("\tPartitioning '{0}' reads".format(side))
                 partition_reads(phase_labels, it, side, 
@@ -748,6 +550,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                    polished_template, read_align, 
                                    cut_consensus, confirmed_pos_path, 
                                    partitioning, all_edge_headers[edge])
+                print "Here 21"
                 #7e. Write stats file for current iteration
                 phase_pairs = sorted(combinations(phase_labels, 
                                                  2))
@@ -764,6 +567,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                             num_threads, orient_dir, 
                                             args.platform, cons_cons_file,
                                             reference_mode=True, sam_output=True)
+                print "Here 22"
                 side_stat_outputs = update_side_stats(
                                     phase_labels, it, side, 
                                     cut_cons_align, polished_template, 
@@ -773,6 +577,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                     side_stats.format(side))
                 phase_below_cov[side], dup_part[side] = side_stat_outputs
                 side_it[side] = it
+                print "Here 23"
             #iter_pairs.append((side_it[side_labels[0]], 
             #                   side_it[side_labels[1]]))
             update_int_stats(edge, side_labels, phase_labels, side_it, cut_cons_align, 
@@ -780,8 +585,10 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                 template_len,
                                 confirmed_pos_path, int_confirmed_path, 
                                 partitioning, integrated_stats)
+            print "Here 24"
             if both_break:
                 break
+        print "Here 25"
         #8. Finalize stats files
         logger.debug("Writing stats files")
         for side in side_labels:
@@ -804,6 +611,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                                integrated_stats, 
                                                phased_edge_path)
         phased, phased_edges, summ_vals = final_int_outputs
+        print "Here 26"
         #9. Generate summary and phased edge file
         logger.debug("Generating summary and phased edge file")
         avg_div = 0.0
@@ -827,8 +635,11 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                                                integrated_stats, 
                                                phased_edge_path, 
                                                res_vs_res)
+        print "Here 27"
         if both_phased_present:
+            print "Here 27a"
             phased_dict.update(phased_edges)
+        print "Here 27b"
         summary_list.append((edge, template_len, 
                              avg_cov, summ_vals, avg_div, 
                              both_phased_present))
@@ -842,6 +653,7 @@ def phase_each_edge(edge_id, all_edge_headers, args,
                               int_confirmed_path, repeat_reads, 
                               frequency_path, alignment_file, 
                               NUM_POL_ITERS, iter_pairs)"""
+        print "Here 27c"
     if edge_phased:
         logger.info("Edge successfully phased")
     else:
@@ -854,18 +666,22 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
                      headers_to_id):
     CONS_ALN_RATE = trestle_config.vals["cons_aln_rate"]
     PHASE_MIN_WIN_DIV = trestle_config.vals["phase_min_win_div"]
+    print "Here 44"
     template = ""
     if os.path.getsize(pol_template_file):
         template_dict = fp.read_sequence_dict(pol_template_file)
         if template_dict and len(template_dict.values()) >= 1:
             template = template_dict.values()[0]
+    print "Here 45"
     pos_headers, positions = div.read_positions(pos_file)
+    print "Here 46"
     all_pos = positions["total"]
     num_windows = ((len(template) - 1) / window_size) + 1
     win_count = [0 for _ in range(num_windows)]
     curr_win = 0
     high_win = -1
     high_count = 0
+    print "Here 47"
     for p in sorted(all_pos):
         while p >= (curr_win + 1) * window_size:
             curr_win += 1
@@ -874,17 +690,22 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
             if win_count[curr_win] >= high_count:
                 high_win = curr_win
                 high_count = win_count[curr_win]
+    print "Here 48"
     win_start = high_win * window_size
     win_end = (high_win + 1) * window_size
     if high_count < PHASE_MIN_WIN_DIV * window_size:
         _write_partitioning_file([], left_part_file)
         _write_partitioning_file([], right_part_file)
+        print "Here 49"
     else:
+        print "Here 50"
         aligns = _read_alignment(alignment_file, pol_template_file,
                                  CONS_ALN_RATE)
         if aligns and aligns[0]:
+            print "Here 51"
             win_output = _all_reads_in_win(aligns[0], high_win, window_size)
             win_headers, win_dists, left_reads, right_reads = win_output
+            print "Here 52"
             head_ids = []
             headers = []
             distances = []
@@ -892,14 +713,17 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
                 head_ids.append(i)
                 headers.append(h)
                 distances.append([d])
+            print "Here 60"
             labels = []
             if len(distances) >= 2:
+                print "Here 61"
                 clustering = AgglomerativeClustering(affinity='euclidean', 
                                                 n_clusters=2, 
                                                 linkage='average')
                 model = clustering.fit(distances)
                 print model.labels_
                 labels = model.labels_
+            print "Here 62", labels, headers, head_ids, headers_to_id
             cluster_one = []
             cluster_two = []
             for i, lab in enumerate(labels):
@@ -907,6 +731,7 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
                     cluster_one.append(headers[i])
                 elif lab == 1 and i < len(headers):
                     cluster_two.append(headers[i])
+            print "Here 63", cluster_one, cluster_two
             left_parts = _make_part_list(cluster_one, cluster_two, left_reads, 
                                          phase_labels, headers_to_id)
             _write_partitioning_file(left_parts, left_part_file)
@@ -915,6 +740,7 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
                                           phase_labels, headers_to_id)
             _write_partitioning_file(right_parts, right_part_file)
             write_side_reads(initial_reads_file, right_part_file, right_reads_file)
+            print "Here 64"
         else:
             raise Exception("Unreadable alignment: {0}".format(alignment_file))
     return win_start, win_end
@@ -934,6 +760,7 @@ def _all_reads_in_win(alns, high_win, win_size):
     left_reads = []
     right_reads = []
     all_reads = set()
+    print "Here 53"
     #Assumes all strands are forward strands
     for i, aln in enumerate(alns):
         q_id = aln.qry_id
@@ -942,13 +769,16 @@ def _all_reads_in_win(alns, high_win, win_size):
         #t_strand = aln.trg_sign
         q_align = aln.qry_seq
         t_align = aln.trg_seq
+        print "Here 54"
         if q_id in all_reads:
             continue
         if win_st >= t_st and t_end >= win_end:
+            print "Here 55"
             #Get read segments for each window
             trg_aln, aln_trg = _index_mapping(aln.trg_seq)
             al_st = 0
             al_end = aln.trg_end
+            print "Here 56"
             if 0 <= win_st - t_st < len(trg_aln):
                 al_st = trg_aln[win_st - t_st]
             else:
@@ -959,10 +789,12 @@ def _all_reads_in_win(alns, high_win, win_size):
                 al_end = aln.trg_end
             else:
                 print "CASE 2", win_st, t_st, win_end, t_end
+            print "Here 57"
             matches = 0
             for q, t in zip(q_align[al_st:al_end], t_align[al_st:al_end]):
                 if q == t:
                     matches += 1
+                    print "Here 58"
             win_dists.append(1 - matches/float(al_end - al_st))
             win_headers.append(q_id)
         elif t_end < win_end:
@@ -970,10 +802,12 @@ def _all_reads_in_win(alns, high_win, win_size):
         elif win_st < t_st:
             right_reads.append(q_id)
         all_reads.add(q_id)
+        print "Here 59"
     return win_headers, win_dists, left_reads, right_reads
 
 def _make_part_list(cluster_one, cluster_two, inner_reads, phase_labels, 
                     headers_to_id):
+    print "Here 70", cluster_one, cluster_two, inner_reads
     part_list = []
     for h in cluster_one:
         read_id = headers_to_id[h]
@@ -1054,12 +888,12 @@ def define_file_names():
                       middle_file_names, output_file_names)
     return all_file_names
 
-'''
+
 #Process Repeats functions
 class ProcessingException(Exception):
     pass
 
-'''
+
 def process_repeats(reads, uniques_dict, work_dir, initial_file_names):
     """Generates unique dirs and files given reads, uniques_dict and
     graph_edges files."""
@@ -1415,7 +1249,7 @@ def _find_consensus_endpoint(cutpoint, aligns, side, win_bool):
         cutpoint_minus_start = cutpoint - coll_aln.trg_start
         print "Here a", cutpoint_minus_start, len(trg_aln)
         aln_ind = trg_aln[cutpoint_minus_start]
-        print "Here b", aln_ind, len(aln_qry)
+        print "Here a", aln_ind, len(aln_qry)
         qry_ind = aln_qry[aln_ind]
         consensus_endpoint = qry_ind + coll_aln.qry_start
     elif cutpoint == coll_aln.trg_end:
@@ -2675,6 +2509,7 @@ def finalize_int_stats(edge, side_labels, phase_labels, side_it,
             f.write("\tAdj aln ind        \t{0}\n".format(right_aln_ind))
             f.write("\tNew Right qry start\t{0}\n\n".format(right_start))
             
+            print "Here C", side_it["left"], side_it["right"]
             header = "edge_{0}_haplotype_{1}".format(edge, phase_id)
             copy_seq = ""
             if (side_it["left"] > 0 and side_it["right"] > 0 and
@@ -2686,6 +2521,7 @@ def finalize_int_stats(edge, side_labels, phase_labels, side_it,
                         consensuses[(side_it["right"], "right", phase_id)], 
                         left_start, left_end, 
                         right_start, right_end)
+            print "Here D"
             phased_edges[header] = copy_seq
             if copy_seq:
                 print "Here E", edge, phase_id, left_start, left_end,  right_start, right_end
@@ -3120,4 +2956,3 @@ def _mean(lst):
     if not lst:
         return 0
     return float(sum(lst)) / len(lst)
-'''

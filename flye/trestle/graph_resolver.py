@@ -223,7 +223,7 @@ def _get_connections(trestle_results):
 
 class UniqueInfo:
     __slots__ = ("id", "path", "all_reads", "in_reads", "out_reads",
-                 "sequences", "overlap_edges")
+                 "sequences") #, "overlap_edges")
 
     def __init__(self, id, repeat_path, all_reads, in_reads, out_reads,
                  sequences):
@@ -234,12 +234,14 @@ class UniqueInfo:
         self.out_reads = out_reads
         self.sequences = sequences
 
-def get_unique_edges(repeat_graph, alignments, edge_seqs):
+def get_unique_edges(repeat_graph, alignments_file, edge_seqs):
     next_path_id = 1
     path_ids = {}
     uniques_dict = {}
 
-    print "Here 1"
+    #print "Here 1"
+    paths_to_phase = []
+    interesting_edges = set()
     for path in repeat_graph.get_unbranching_paths():
         if path[0].repetitive or path[0].self_complement:
             continue
@@ -253,28 +255,40 @@ def get_unique_edges(repeat_graph, alignments, edge_seqs):
         outputs = set()
         for out_edge in path[-1].node_right.out_edges:
             outputs.add(out_edge.edge_id)
-        #print "Here 3"
+        
+        paths_to_phase.append((path, inputs, outputs))
+        interesting_edges.update(set([e.edge_id for e in path]))
+        
+    interesting_alignments = []
+    for read_aln in iter_alignments(alignments_file):
+        unique_read = False
+        for edge_aln in read_aln:
+            if edge_aln.edge_id in interesting_edges:
+                unique_read = True
+        if unique_read:
+            interesting_alignments.append(read_aln)
+    #print "Here 3"
+    for path, inputs, outputs in paths_to_phase:
         if path[0].edge_id not in path_ids:
             path_ids[path[0].edge_id] = next_path_id
             path_ids[-path[-1].edge_id] = -next_path_id
             next_path_id += 1
-        if path[0].edge_id in path_ids:
-            path_id = path_ids[path[0].edge_id]
-        else:
-            print "edge_id not in path_ids", path[0].edge_id
-        unique_edge_ids = set(map(lambda e: e.edge_id, path))
+        path_id = path_ids[path[0].edge_id]
+        
+        unique_edge_ids = set([e.edge_id for e in path])
         #print "Here 4"
         #print "path_id", path_id
         inner_reads = []
         input_reads = defaultdict(list)
         output_reads = defaultdict(list)
-        for read_aln in alignments:
-            repeat_read = False
+        for read_aln in interesting_alignments:
+            unique_read = False
             for edge_aln in read_aln:
                 if edge_aln.edge_id in unique_edge_ids:
-                    repeat_read = True
-            if not repeat_read:
+                    unique_read = True
+            if not unique_read:
                 continue
+            
             inner_reads.append(read_aln[0].overlap.cur_id)
             for prev_edge, next_edge in zip(read_aln[:-1], read_aln[1:]):
                 if (prev_edge.edge_id in inputs and
