@@ -120,9 +120,9 @@ def test_edge_lengths(args, phasing_dir, uniques_dict):
             seq = fp.reverse_complement(seq)
         initial_reads_dict[header[1:]] = seq
     
-    if template_dict and template_dict.values()[0]:
+    if template_dict and any(template_dict.values()):
         fp.write_fasta_dict(template_dict, template_path)
-    if initial_reads_dict and initial_reads_dict.values()[0]:
+    if initial_reads_dict and any(initial_reads_dict.values()):
         fp.write_fasta_dict(initial_reads_dict, initial_reads_path)
     
     if not template_dict:
@@ -181,6 +181,7 @@ def test_divergence(args, phasing_dir, uniques_dict):
     """Decides if assembly is haploid or not using the divergence of
     the longest edge in the assembly. Uses phase_min_longest_div in
     trestle config as threshold for minimum divergence"""
+    print("got here 1")
     SUB_THRESH = trestle_config.vals["sub_thresh"]
     DEL_THRESH = trestle_config.vals["del_thresh"]
     INS_THRESH = trestle_config.vals["ins_thresh"]
@@ -256,6 +257,7 @@ def test_divergence(args, phasing_dir, uniques_dict):
     #if curr_label == "reverse":
     #    template_seq = fp.reverse_complement(graph_dict[edge])
     template_dict[curr_edge] = template_seq
+    print("got here 2")
     
     #rev_comp of read will be written if the header is -h
     
@@ -272,12 +274,12 @@ def test_divergence(args, phasing_dir, uniques_dict):
         if header[0] == '-':
             seq = fp.reverse_complement(seq)
         initial_reads_dict[header[1:]] = seq
-    
-    if template_dict and template_dict.values()[0]:
+    print("got here 3")
+    if template_dict and any(template_dict.values()):
         fp.write_fasta_dict(template_dict, template_path)
-    if initial_reads_dict and initial_reads_dict.values()[0]:
+    if initial_reads_dict and any(initial_reads_dict.values()):
         fp.write_fasta_dict(initial_reads_dict, initial_reads_path)
-    
+    print("got here 4")
     if not template_dict:
         raise ProcessingException("No template {0} found".format(
                                         curr_edge))
@@ -786,7 +788,7 @@ def _find_div_region(pos_file, pol_template_file, alignment_file,
     if os.path.getsize(pol_template_file):
         template_dict = fp.read_sequence_dict(pol_template_file)
         if template_dict and len(template_dict.values()) >= 1:
-            template = template_dict.values()[0]
+            template = next(iter(template_dict.values()))
     pos_headers, positions = div.read_positions(pos_file)
     all_pos = positions["total"]
     num_windows = ((len(template) - 1) / window_size) + 1
@@ -923,7 +925,7 @@ def write_side_reads(all_reads, partitioning, out_file):
         read_id, status, phase, top_sc, total_sc, header = part
         seq = all_reads_dict[header]
         side_reads[header] = seq
-    if side_reads and side_reads.values()[0]:
+    if side_reads and any(side_reads.values()):
         fp.write_fasta_dict(side_reads, out_file)
         
 
@@ -1085,9 +1087,9 @@ def process_repeats(reads, uniques_dict, work_dir, initial_file_names):
                     all_edge_headers[curr_edge][header[1:]] = read_id
                     read_id += 1
             
-            if template_dict and template_dict.values()[0]:
+            if template_dict and any(template_dict.values()):
                 fp.write_fasta_dict(template_dict, template_path)
-            if initial_reads_dict and initial_reads_dict.values()[0]:
+            if initial_reads_dict and any(initial_reads_dict.values()):
                 fp.write_fasta_dict(initial_reads_dict, initial_reads_path)
             
             if not template_dict:
@@ -1186,7 +1188,7 @@ def write_phased_reads(it, side, phase_id, all_reads, partitioning, out_file):
             phase_header = phase_header_name.format(read_id, it, 
                                                   side, phase_id, header)
             phased_reads[phase_header] = phase_seq
-    if phased_reads and phased_reads.values()[0]:
+    if phased_reads and any(phased_reads.values()):
         fp.write_fasta_dict(phased_reads, out_file)
 
 
@@ -1311,8 +1313,8 @@ def truncate_consensus(side, cutpoint, cons_al_file, template,
     
     if consensus_endpoint != -1 and win_endpoint != -1 and os.path.getsize(polished_consensus):
         cons_seqs = fp.read_sequence_dict(polished_consensus)
-        cons_head = cons_seqs.keys()[0]
-        consensus = cons_seqs.values()[0]
+        cons_head = next(iter(cons_seqs.keys()))
+        consensus = next(iter(cons_seqs.values()))
         if side == "right":
             start = 0
             if win_endpoint >= 0:
@@ -2836,11 +2838,11 @@ def _check_overlap(in_file, temp_file, out_file, overlap, in_start, in_end,
                    out_qry_aln, out_aln_qry, out_trg_end, out_qry_end, 
                    in_align, out_align):
     in_dict = fp.read_sequence_dict(in_file)
-    in_seq = in_dict.values()[0]
+    in_seq = next(iter(in_dict.values()))
     temp_dict = fp.read_sequence_dict(temp_file)
-    temp_seq = temp_dict.values()[0]
+    temp_seq = next(iter(temp_dict.values()))
     out_dict = fp.read_sequence_dict(out_file)
-    out_seq = out_dict.values()[0]  
+    out_seq = next(iter(out_dict.values()))
     for i in range(len(out_qry)/50-1, len(out_qry)/50+1):
         aln_ind_st = i*50
         aln_ind_end = (i+1)*50
@@ -2900,9 +2902,9 @@ def _construct_repeat_copy(left_file, right_file, left_start, left_end,
         not os.path.getsize(right_file)):
         return ""
     left_dict = fp.read_sequence_dict(left_file)
-    left_seq = left_dict.values()[0]
+    left_seq = next(iter(left_dict.values()))
     right_dict = fp.read_sequence_dict(right_file)
-    right_seq = right_dict.values()[0]
+    right_seq = next(iter(right_dict.values()))
     seq = ""
     if (0 <= left_start <= len(left_seq) and
             0 <= left_end <= len(left_seq) and

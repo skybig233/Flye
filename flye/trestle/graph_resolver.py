@@ -225,10 +225,10 @@ class UniqueInfo:
     __slots__ = ("id", "path", "all_reads", "in_reads", "out_reads",
                  "sequences") #, "overlap_edges")
 
-    def __init__(self, id, repeat_path, all_reads, in_reads, out_reads,
+    def __init__(self, id, path, all_reads, in_reads, out_reads,
                  sequences):
         self.id = id
-        self.repeat_path = repeat_path
+        self.path = path
         self.all_reads = all_reads
         self.in_reads = in_reads
         self.out_reads = out_reads
@@ -337,7 +337,7 @@ def get_unique_edges(repeat_graph, alignments_file, edge_seqs):
 
 def dump_uniques(uniques_info, filename):
     with open(filename, "w") as f:
-        for unique_id, info in uniques_info.iteritems():
+        for unique_id, info in iteritems(uniques_info):
             f.write("#Unique {0}\n\n".format(unique_id))
 
             f.write("#All reads\t{0}\n".format(len(info.all_reads)))
