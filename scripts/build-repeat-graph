@@ -2,8 +2,12 @@
 
 import argparse
 import os
+import sys
 import subprocess
 
+flye_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+sys.path.insert(0, flye_root)
+import flye.config.py_cfg as cfg
 
 def main():
     parser = argparse.ArgumentParser()
@@ -23,13 +27,18 @@ def main():
                         dest="match_mode")
     args = parser.parse_args()
 
+    READ_TYPE = "corrected"
+
     flye_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     flye_repeat_bin = os.path.join(flye_root, "bin", "flye-modules")
-    config = os.path.join(flye_root, "flye", "config", "bin_cfg", "asm_corrected_reads.cfg")
+    #config = os.path.join(flye_root, "flye", "config", "bin_cfg", "asm_corrected_reads.cfg")
+    config = os.path.join(flye_root, "flye", cfg.vals["bin_cfg"][READ_TYPE])
 
     if not os.path.isdir(args.out_dir):
         os.mkdir(args.out_dir)
     log_file = os.path.join(args.out_dir, "flye.log")
+
+    kmer_size = cfg.vals["kmer_size"][READ_TYPE]
 
     cmd = [flye_repeat_bin, "repeat"]
     cmd.extend(["--min-ovlp", str(args.min_overlap)])
@@ -40,6 +49,7 @@ def main():
     cmd.extend(["--input-seq", args.input_assembly])
     cmd.extend(["--config", config])
     cmd.extend(["--out-dir", args.out_dir])
+    cmd.extend(["--kmer", str(kmer_size)])
     print(" ".join(cmd))
     subprocess.check_call(cmd)
 
