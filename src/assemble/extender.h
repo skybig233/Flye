@@ -15,7 +15,9 @@ class Extender
 {
 public:
 	Extender(const SequenceContainer& readsContainer, 
-			 OverlapContainer& ovlpContainer):
+			 OverlapContainer& ovlpContainer,
+			 int safeOverlap):
+		_safeOverlap(safeOverlap),
 		_readsContainer(readsContainer), 
 		_ovlpContainer(ovlpContainer),
 		_chimDetector(readsContainer, ovlpContainer)
@@ -32,7 +34,8 @@ private:
 			numSuspicious(0), meanOverlaps(0), stepsToTurn(0),
 			assembledLength(0), singleton(false),
 			avgOverlapSize(0), minOverlapSize(0),
-			leftAsmOverlap(0), rightAsmOverlap(0) {}
+			leftAsmOverlap(0), rightAsmOverlap(0),
+			shortExtensions(0) {}
 
 		std::vector<FastaRecord::Id> reads;
 		bool leftTip;
@@ -46,7 +49,10 @@ private:
 		int  minOverlapSize;
 		int  leftAsmOverlap;
 		int  rightAsmOverlap;
+		int  shortExtensions;
 	};
+
+	const int _safeOverlap;
 
 	ExtensionInfo extendDisjointig(FastaRecord::Id startingRead);
 	int   countRightExtensions(FastaRecord::Id readId) const;

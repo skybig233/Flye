@@ -15,183 +15,15 @@
 #include <cstring>
 #include <iomanip>
 
-#define HAVE_KALLOC
-#include "kalloc.h"
-#include "ksw2.h"
-#undef HAVE_KALLOC
 
 #include "overlap.h"
+#include "alignment.h"
 #include "../common/config.h"
 #include "../common/utils.h"
 #include "../common/parallel.h"
 #include "../common/disjoint_set.h"
 #include "../common/bfcontainer.h"
 
-
-namespace
-{
-	using namespace std::chrono;
-	struct ThreadMemPool
-	{
-		ThreadMemPool():
-			prevCleanup(system_clock::now() + seconds(rand() % 60))
-		{
-		   memPool = km_init();
-		}
-		~ThreadMemPool()
-		{
-		   km_destroy(memPool);
-		}
-		void cleanIter()
-		{
-			if ((system_clock::now() - prevCleanup) > seconds(60))
-			{
-				km_destroy(memPool);
-               	memPool = km_init();
-				prevCleanup = system_clock::now();
-			}
-		}
-
-		time_point<system_clock> prevCleanup;
-		void* memPool;
-    };
-
-	float kswAlign(const DnaSequence& trgSeq, size_t trgBegin, size_t trgLen,
-				   const DnaSequence& qrySeq, size_t qryBegin, size_t qryLen,
-				   int matchScore, int misScore, int gapOpen, int gapExtend,
-				   bool showAlignment)
-	{
-		static const int32_t MAX_JUMP = Config::get("maximum_jump");
-		const int KMER_SIZE = Parameters::get().kmerSize;
-
-		thread_local ThreadMemPool buf;
-		thread_local std::vector<uint8_t> trgByte;
-		thread_local std::vector<uint8_t> qryByte;
-		buf.cleanIter();
-		trgByte.assign(trgLen, 0);
-		qryByte.assign(qryLen, 0);
-
-		for (size_t i = 0; i < trgLen; ++i)
-		{
-			trgByte[i] = trgSeq.atRaw(i + trgBegin);
-		}
-		for (size_t i = 0; i < qryLen; ++i)
-		{
-			qryByte[i] = qrySeq.atRaw(i + qryBegin);
-		}
-
-		int seqDiff = abs((int)trgByte.size() - (int)qryByte.size());
-		int bandWidth = seqDiff + MAX_JUMP;
-
-		//substitution matrix
-		int8_t a = matchScore;
-		int8_t b = misScore < 0 ? misScore : -misScore; // a > 0 and b < 0
-		int8_t subsMat[] = {a, b, b, b, 0, 
-						  	b, a, b, b, 0, 
-						  	b, b, a, b, 0, 
-						  	b, b, b, a, 0, 
-						  	0, 0, 0, 0, 0};
-
-		ksw_extz_t ez;
-		memset(&ez, 0, sizeof(ksw_extz_t));
-		const int NUM_NUCL = 5;
-		const int Z_DROP = -1;
-		const int FLAG = KSW_EZ_APPROX_MAX | KSW_EZ_APPROX_DROP;
-		const int END_BONUS = 0;
-		//ksw_extf2_sse(0, qseq.size(), &qseq[0], tseq.size(), &tseq[0], matchScore,
-		//		 	  misScore, gapOpen, bandWidth, Z_DROP, &ez);
-		ksw_extz2_sse(buf.memPool, qryByte.size(), &qryByte[0], 
-					  trgByte.size(), &trgByte[0], NUM_NUCL,
-				 	  subsMat, gapOpen, gapExtend, bandWidth, Z_DROP, 
-					  END_BONUS, FLAG, &ez);
-		
-		//decode CIGAR
-		std::string strQ;
-		std::string strT;
-		std::string alnQry;
-		std::string alnTrg;
-		if (showAlignment)
-		{
-			for (auto x : qryByte) strQ += "ACGT"[x];
-			for (auto x : trgByte) strT += "ACGT"[x];
-		}
-
-		size_t posQry = 0;
-		size_t posTrg = 0;
-        int matches = 0;
-		int alnLength = 0;
-		int condensedLength = 0;
-		for (size_t i = 0; i < (size_t)ez.n_cigar; ++i)
-		{
-			int size = ez.cigar[i] >> 4;
-			char op = "MID"[ez.cigar[i] & 0xf];
-			alnLength += size;
-
-        	if (op == 'M')
-			{
-				for (size_t i = 0; i < (size_t)size; ++i)
-				{
-					if (trgByte[posTrg + i] == qryByte[posQry + i]) ++matches;
-				}
-				if (showAlignment)
-				{
-					alnQry += strQ.substr(posQry, size);
-					alnTrg += strT.substr(posTrg, size);
-				}
-				posQry += size;
-				posTrg += size;
-				condensedLength += size;
-			}
-            else if (op == 'I')
-			{
-				if (showAlignment)
-				{
-					alnQry += strQ.substr(posQry, size);
-					alnTrg += std::string(size, '-');
-				}
-                posQry += size;
-				condensedLength += std::min(size, KMER_SIZE);
-			}
-            else //D
-			{
-				if (showAlignment)
-				{
-					alnQry += std::string(size, '-');
-					alnTrg += strT.substr(posTrg, size);
-				}
-				posTrg += size;
-				condensedLength += std::min(size, KMER_SIZE);
-			}
-		}
-        //float errRate = 1 - float(matches) / alnLength;
-        //float errRate = 1 - float(matches) / std::max(tseq.size(), qseq.size());
-        float errRate = 1 - float(matches) / condensedLength;
-		kfree(buf.memPool, ez.cigar);
-
-		if (showAlignment)
-		{
-			const int WIDTH = 100;
-			for (size_t chunk = 0; chunk <= alnQry.size() / WIDTH; ++chunk)
-			{
-				for (size_t i = chunk * WIDTH; 
-					 i < std::min((chunk + 1) * WIDTH, alnQry.size()); ++i)
-				{
-					std::cout << alnQry[i];
-				}
-				std::cout << "\n";
-				for (size_t i = chunk * WIDTH; 
-					 i < std::min((chunk + 1) * WIDTH, alnQry.size()); ++i)
-				{
-					std::cout << alnTrg[i];
-				}
-				std::cout << "\n\n";
-			}
-			std::cout << "\n----------------\n" << std::endl;
-		}
-
-		return errRate;
-	}
-}
 
 //Check if it is a proper overlap
 bool OverlapDetector::overlapTest(const OverlapRange& ovlp,
@@ -227,7 +59,7 @@ bool OverlapDetector::overlapTest(const OverlapRange& ovlp,
 		int32_t intersect = std::min(ovlp.curEnd, ovlp.extLen - ovlp.extBegin) - 
 			   				std::max(ovlp.curBegin, ovlp.extLen - ovlp.extEnd);
 
-		if (intersect > -_maxJump) outSuggestChimeric = true;
+		//if (intersect > -_maxJump) outSuggestChimeric = true;
 		if (intersect > ovlp.curRange() / 2) return false;
 	}
 
@@ -380,6 +212,7 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 		if (_vertexIndex.isRepetitive(curKmerPos.kmer))
 		{
 			curFilteredPos.push_back(curKmerPos.position);
+			continue;
 		}
 		if (!_vertexIndex.kmerFreq(curKmerPos.kmer)) continue;
 
@@ -618,6 +451,7 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 				ovlp.leftShift = median(shifts);
 				ovlp.rightShift = extLen - curLen + ovlp.leftShift;
 
+				//estimating identity using k-mers
 				int32_t filteredPositions = 0;
 				for (auto pos : curFilteredPos)
 				{
@@ -625,7 +459,6 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 					if (pos > ovlp.curEnd) break;
 					++filteredPositions;
 				}
-
 				float normLen = std::max(ovlp.curRange(), 
 										 ovlp.extRange()) - filteredPositions;
 				float matchRate = (float)chainLength * 
@@ -633,79 +466,28 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 				matchRate = std::min(matchRate, 1.0f);
 				//float repeatRate = (float)filteredPositions / ovlp.curRange();
 				ovlp.seqDivergence = std::log(1 / matchRate) / kmerSize;
-				ovlp.seqDivergence += _estimatorBias;
-
-				if(_nuclAlignment)
-				{
-					ovlp.seqDivergence = 
-						kswAlign(fastaRec.sequence, ovlp.curBegin, ovlp.curRange(),
-								 _seqContainer.getSeq(extId), ovlp.extBegin, ovlp.extRange(),
-								 /*match*/ 1, /*mm*/ -2, /*gap open*/ 2, 
-								 /*gap ext*/ 1, false);
-				}
-
-				float divThreshold = _maxDivergence;
-				/*if (ovlp.curBegin < _maxJump || curLen - ovlp.curEnd < _maxJump ||
-					ovlp.extBegin < _maxJump || extLen - ovlp.extEnd < _maxJump)
-				{
-					divThreshold += _badEndAdjustment;
-				}*/
-				if (ovlp.seqDivergence < divThreshold)
-				{
-					extOverlaps.push_back(ovlp);
-				}
-
-				//collecting overlap statistics
-				size_t wnd = ovlp.curBegin / STAT_WND;
-				assert(wnd < divStatWindows.size());
-				if (ovlp.curRange() > divStatWindows[wnd].curRange())
-				{
-					divStatWindows[wnd] = ovlp;
-				}
-
-				//benchmarking divergence
-				/*float alnDiff = kswAlign(fastaRec.sequence, ovlp.curBegin, ovlp.curRange(),
-										 _seqContainer.getSeq(extId), ovlp.extBegin, 
-										  ovlp.extRange(), 1, -2, 2, 1, false);
-				fout << alnDiff << " " << ovlp.seqDivergence << std::endl;*/
-				/*if (0.15 > alnDiff && ovlp.seqDivergence > 0.20)
-				{
-					kswAlign(fastaRec.sequence
-								.substr(ovlp.curBegin, ovlp.curRange()),
-							 _seqContainer.getSeq(extId)
-								.substr(ovlp.extBegin, ovlp.extRange()),
-							 1, -2, 2, 1, true);
-					std::cout << alnDiff << " " << ovlp.seqDivergence << 
-						" " << (float)filteredPositions / ovlp.curRange() << std::endl;
-				}*/
+				//ovlp.seqDivergence += _estimatorBias;
+				extOverlaps.push_back(ovlp);
 			}
 		}
-		
-		//selecting the best
-		if (_onlyMaxExt)
+
+		//now we have a lits of (possibly multiple) putative overlaps
+		//agains a singe ext sequence. Now, select the list of primary overlaps
+		std::vector<OverlapRange> primaryOverlaps;
+		std::sort(extOverlaps.begin(), extOverlaps.end(),
+				  [](const OverlapRange& r1, const OverlapRange& r2)
+				  {return r1.score > r2.score;});
+
+		if (_onlyMaxExt)	//select single best overlap
 		{
-			const OverlapRange* maxOvlp = nullptr;
-			for (const auto& ovlp : extOverlaps)
-			{
-				if (!maxOvlp || ovlp.score > maxOvlp->score)
-				{
-					maxOvlp = &ovlp;
-				}
-			}
-			if (maxOvlp) detectedOverlaps.push_back(*maxOvlp);
+			if (!extOverlaps.empty()) primaryOverlaps.push_back(extOverlaps.front());
 		}
 		else
 		{
-			std::vector<OverlapRange> primOverlaps;
-			//sort by decreasing score
-			std::sort(extOverlaps.begin(), extOverlaps.end(),
-					  [](const OverlapRange& r1, const OverlapRange& r2)
-					  {return r1.score > r2.score;});
-			
 			for (const auto& ovlp : extOverlaps)
 			{
 				bool isContained = false;
-				for (const auto& prim : primOverlaps)
+				for (const auto& prim : primaryOverlaps)
 				{
 					if (ovlp.containedBy(prim) && prim.score > ovlp.score)
 					{
@@ -715,12 +497,43 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 				}
 				if (!isContained)
 				{
-					primOverlaps.push_back(ovlp);
+					primaryOverlaps.push_back(ovlp);
 				}
 			}
-			for (const auto& ovlp : primOverlaps)
+		}
+
+		//divergence check for the selected primary overlaps
+		for (auto& ovlp : primaryOverlaps)
+		{
+			if(_nuclAlignment)	//identity using base-level alignment
+			{
+				ovlp.seqDivergence = getAlignmentErrEdlib(ovlp, fastaRec.sequence, 
+														   _seqContainer.getSeq(extId),
+														   _maxDivergence, _useHpc);
+			}
+
+			if (ovlp.seqDivergence < _maxDivergence)
 			{
 				detectedOverlaps.push_back(ovlp);
+			}
+			//if alignment not passing thrshold, check if its parts do
+			else if (_partitionBadMappings)
+			{
+				auto trimmedOverlaps = 
+					checkIdyAndTrim(ovlp, fastaRec.sequence, 
+								    _seqContainer.getSeq(extId),
+								    _maxDivergence, _minOverlap, _useHpc);
+				for (auto& trimOvlp : trimmedOverlaps)
+				{
+					detectedOverlaps.push_back(trimOvlp);
+				}
+			}
+
+			//statistics
+			size_t wnd = ovlp.curBegin / STAT_WND;
+			if (ovlp.curRange() > divStatWindows[wnd].curRange())
+			{
+				divStatWindows[wnd] = ovlp;
 			}
 		}
 	}
@@ -786,7 +599,7 @@ const std::vector<OverlapRange>&
 	for (const auto& ovlp : overlaps) revOverlaps.push_back(ovlp.complement());
 
 	_overlapIndex.update_fn(readId,
-		[&wrapper, &overlaps, &revOverlaps, &suggestChimeric, &flipped, this]
+		[&wrapper, &overlaps, &revOverlaps, &suggestChimeric, this]
 		(IndexVecWrapper& val)
 		{
 			if (!val.cached)
@@ -863,12 +676,15 @@ void OverlapContainer::findAllOverlaps()
 	std::vector<FastaRecord::Id> allQueries;
 	for (const auto& seq : _queryContainer.iterSeqs())
 	{
-		allQueries.push_back(seq.id);
+		if (seq.id.strand())
+		{
+			allQueries.push_back(seq.id);
+		}
 	}
 
 	std::mutex indexMutex;
 	std::function<void(const FastaRecord::Id&)> indexUpdate = 
-	[this, &indexMutex] (const FastaRecord::Id& seqId)
+	[this] (const FastaRecord::Id& seqId)
 	{
 		this->lazySeqOverlaps(seqId);	//automatically stores overlaps
 	};
@@ -972,7 +788,7 @@ void OverlapContainer::estimateOverlaperParameters()
 {
 	Logger::get().debug() << "Estimating k-mer identity bias";
 
-	const int NEDEED_OVERLAPS = 1000;
+	//const int NEDEED_OVERLAPS = 1000;
 	const int MAX_SEQS = 1000;
 
 	std::vector<FastaRecord::Id> readsToCheck;
@@ -989,58 +805,81 @@ void OverlapContainer::estimateOverlaperParameters()
 	[this, &storageMutex, &biases, &trueDivergence] (const FastaRecord::Id& seqId)
 	{
 		auto overlaps = this->quickSeqOverlaps(seqId, /*max ovlps*/ 0);
-		for (const auto& ovlp : overlaps)
+		OverlapRange* maxOvlp = nullptr;
+		for (auto& ovlp : overlaps)
+		{
+			if (!maxOvlp || ovlp.curRange() > maxOvlp->curRange())
+			{
+				maxOvlp = &ovlp;
+			}
+		}
+		if (maxOvlp)
+		{
+			std::lock_guard<std::mutex> lock(storageMutex);
+			trueDivergence.push_back(maxOvlp->seqDivergence);
+		}
+
+		/*for (const auto& ovlp : overlaps)
 		{
 			float trueDiv = 
-				kswAlign(_queryContainer.getSeq(seqId), ovlp.curBegin, ovlp.curRange(),
-						 _ovlpDetect._seqContainer.getSeq(ovlp.extId),
-						 ovlp.extBegin, ovlp.extRange(),
-						 /*match*/ 1, /*mm*/ -2, /*gap open*/ 2, 
-						 /*gap ext*/ 1, false);
+				getAlignmentErrEdlib(ovlp, _queryContainer.getSeq(seqId),
+									 _ovlpDetect._seqContainer.getSeq(ovlp.extId),
+									 0.5f);
 
 			std::lock_guard<std::mutex> lock(storageMutex);
 			biases.push_back(trueDiv - ovlp.seqDivergence);
 			trueDivergence.push_back(trueDiv);
-			if (biases.size() >= NEDEED_OVERLAPS) return;
-		}
+
+			std::lock_guard<std::mutex> lock(storageMutex);
+			trueDivergence.push_back(ovlp.seqDivergence);
+			if (trueDivergence.size() >= NEDEED_OVERLAPS) return;
+		}*/
 	};
 	processInParallel(readsToCheck, computeParallel, 
 					  Parameters::get().numThreads, false);
 
-	if (!biases.empty())
+	if (!trueDivergence.empty())
 	{
-		_kmerIdyEstimateBias = median(biases);
+		//_kmerIdyEstimateBias = median(biases);
+		//_kmerIdyEstimateBias = 0;
 		_meanTrueOvlpDiv = median(trueDivergence);
 
 		//set the parameters and reset statistics
-		_ovlpDetect._estimatorBias = _kmerIdyEstimateBias;
+		//_ovlpDetect._estimatorBias = _kmerIdyEstimateBias;
 		_divergenceStats.vecSize = 0;
 	}
 	else
 	{
 		Logger::get().warning() << "No overlaps found - unable to estimate parameters";
 		_meanTrueOvlpDiv = 0.5f;
-		_kmerIdyEstimateBias = 0.0f;
+		//_kmerIdyEstimateBias = 0.0f;
 	}
 
-	Logger::get().debug() << "Median overlap divergence: " << _meanTrueOvlpDiv;
-	Logger::get().debug() << "K-mer estimate bias: " << _kmerIdyEstimateBias;
+	Logger::get().debug() << "Initial divergence estimate : " << _meanTrueOvlpDiv;
+	//Logger::get().debug() << "K-mer estimate bias (true - est): " << _kmerIdyEstimateBias;
 }
 
 
-void OverlapContainer::setRelativeDivergenceThreshold(float relThreshold)
+void OverlapContainer::setDivergenceThreshold(float threshold, bool isRelative)
 {
-	_ovlpDetect._maxDivergence = _meanTrueOvlpDiv + relThreshold;
+
+	_ovlpDetect._maxDivergence = (isRelative ? _meanTrueOvlpDiv : 0.0f) + threshold;
+	Logger::get().debug() << "Relative threshold: " << "NY"[(size_t)isRelative];
 	Logger::get().debug() << "Max divergence threshold set to " 
 		<< _ovlpDetect._maxDivergence;
 }
 
-
 void OverlapContainer::overlapDivergenceStats()
 {
-	std::vector<float> ovlpDivergence(_divergenceStats.divVec.begin(),
-									  _divergenceStats.divVec.begin() + 
-									  		_divergenceStats.vecSize);
+	this->overlapDivergenceStats(_divergenceStats, 
+								 _ovlpDetect._maxDivergence);
+}
+
+void OverlapContainer::overlapDivergenceStats(const OvlpDivStats& stats,
+											  float divCutoff)
+{
+	std::vector<float> ovlpDivergence(stats.divVec.begin(),
+									  stats.divVec.begin() + stats.vecSize);
 	const int HIST_LENGTH = 100;
 	const int HIST_HEIGHT = 20;
 	const float HIST_MIN = 0;
@@ -1055,7 +894,7 @@ void OverlapContainer::overlapDivergenceStats()
 		}
 	}
 	int histMax = 1;
-	int threshold = _ovlpDetect._maxDivergence * mult * 100;
+	int threshold = divCutoff * mult * 100;
 	for (int freq : histogram) histMax = std::max(histMax, freq);
 
 	std::string histString = "\n";

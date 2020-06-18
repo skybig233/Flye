@@ -116,6 +116,12 @@ struct OverlapRange
 		}
 	}
 
+	int32_t lrOverhang() const
+	{
+		return std::max(std::min(curBegin, extBegin),
+						std::min(curLen - curEnd, extLen - extEnd));
+	}
+
 	bool contains(int32_t curPos, int32_t extPos) const
 	{
 		return curBegin <= curPos && curPos <= curEnd &&
@@ -230,24 +236,26 @@ public:
 	OverlapDetector(const SequenceContainer& seqContainer,
 					const VertexIndex& vertexIndex,
 					int maxJump, int minOverlap, int maxOverhang,
-					int maxCurOverlaps, bool keepAlignment, bool onlyMaxExt,
-					float maxDivergence, float badEndAdjustment,
-					bool nuclAlignment, MatchMode matchMode=MatchLocal):
+					bool keepAlignment, bool onlyMaxExt,
+					float maxDivergence, bool nuclAlignment,
+					bool partitionBadMappings, bool useHpc,
+					MatchMode matchMode=MatchLocal):
 		_maxJump(maxJump),
 		_minOverlap(minOverlap),
 		_maxOverhang(maxOverhang),
-		_maxCurOverlaps(maxCurOverlaps),
+		_maxCurOverlaps(0),	//no max overlaps
 		_checkOverhang(maxOverhang > 0),
 		_keepAlignment(keepAlignment),
 		_onlyMaxExt(onlyMaxExt),
 		_nuclAlignment(nuclAlignment),
+		_partitionBadMappings(partitionBadMappings),
+		_useHpc(useHpc),
 		_maxDivergence(maxDivergence),
-		_badEndAdjustment(badEndAdjustment),
-		_estimatorBias(0.0f),
+		//_badEndAdjustment(badEndAdjustment),
+		//_estimatorBias(0.0f),
 		_vertexIndex(vertexIndex),
 		_seqContainer(seqContainer),
 		_matchMode(matchMode)
-		//_seqHitCounter(_seqContainer.getMaxSeqId())
 	{
 	}
 
@@ -261,7 +269,7 @@ private:
 				   int maxOverlaps) const;
 
 	bool    overlapTest(const OverlapRange& ovlp, bool& outSuggestChimeric) const;
-	
+
 	const int   _maxJump;
 	const int   _minOverlap;
 	const int   _maxOverhang;
@@ -270,10 +278,12 @@ private:
 	const bool  _keepAlignment;
 	const bool  _onlyMaxExt;
 	const bool  _nuclAlignment;
+	const bool  _partitionBadMappings;
+	const bool  _useHpc;
 
 	mutable float _maxDivergence;
-	mutable float _badEndAdjustment;
-	mutable float _estimatorBias;
+	//mutable float _badEndAdjustment;
+	//mutable float _estimatorBias;
 
 	const VertexIndex& _vertexIndex;
 	const SequenceContainer& _seqContainer;
@@ -292,7 +302,7 @@ public:
 		_ovlpDetect(ovlpDetect),
 		_queryContainer(queryContainer),
 		_indexSize(0),
-		_kmerIdyEstimateBias(0),
+		//_kmerIdyEstimateBias(0),
 		_meanTrueOvlpDiv(0)
 	{}
 
@@ -327,11 +337,11 @@ public:
 	std::vector<OverlapRange> quickSeqOverlaps(FastaRecord::Id readId, 
 											   int maxOverlaps=0);
 
-	size_t indexSize() {return _indexSize;}
+	//size_t indexSize() {return _indexSize;}
 
 	void estimateOverlaperParameters();
 
-	void setRelativeDivergenceThreshold(float relThreshold);
+	void setDivergenceThreshold(float threshold, bool isRelative);
 
 	//The functions below are NOT thread safe.
 	//Do not mix them with any other functions
@@ -342,6 +352,7 @@ public:
 
 	//outputs statistics about overlaping sequence divergence
 	void overlapDivergenceStats();
+	void overlapDivergenceStats(const OvlpDivStats& stats, float divThreshold);
 
 	//Computes and stores all-vs-all overlaps
 	void findAllOverlaps();
@@ -365,6 +376,75 @@ private:
 	std::unordered_map<FastaRecord::Id, 
 					   IntervalTree<const OverlapRange*>> _ovlpTree;
 
-	float _kmerIdyEstimateBias;
+	//float _kmerIdyEstimateBias;
 	float _meanTrueOvlpDiv;
+};
+
+//a helper to iterate over overlaps with no overhangs
+class OvlpIterator
+{
+public:
+	OvlpIterator(std::vector<OverlapRange>::const_iterator it,
+				 std::vector<OverlapRange>::const_iterator end,
+				 bool onlyNoOverhang):
+		it(it), end(end), onlyNoOverhang(onlyNoOverhang)
+	{
+		if (onlyNoOverhang)
+		{
+			static const int MAX_OVERHANG = Config::get("maximum_overhang");
+			while(it != end && it->lrOverhang() > MAX_OVERHANG) ++it;
+		}
+	}
+
+	bool operator==(const OvlpIterator& other) const
+	{
+		return it == other.it && onlyNoOverhang == other.onlyNoOverhang;
+	}
+	bool operator!=(const OvlpIterator& other) const
+	{
+		return !(*this == other);
+	}
+
+	//__attribute__((always_inline))
+	const OverlapRange& operator*() const
+	{
+		return *it;
+	}
+
+	OvlpIterator& operator++()
+	{
+		++it;
+		if (onlyNoOverhang)
+		{
+			static const int MAX_OVERHANG = Config::get("maximum_overhang");
+			while(it != end && it->lrOverhang() > MAX_OVERHANG) ++it;
+		}
+		return *this;
+	}
+
+private:
+	std::vector<OverlapRange>::const_iterator it;
+	std::vector<OverlapRange>::const_iterator end;
+	bool onlyNoOverhang;
+};
+
+class IterNoOverhang
+{
+public:
+	IterNoOverhang(const std::vector<OverlapRange>& ovlps): 
+		ovlps(ovlps), onlyNoOverhang(true) {}
+
+	OvlpIterator begin()
+	{
+		return OvlpIterator(ovlps.begin(), ovlps.end(), onlyNoOverhang);
+	}
+
+	OvlpIterator end()
+	{
+		return OvlpIterator(ovlps.end(), ovlps.end(), onlyNoOverhang);
+	}
+
+private:
+	const std::vector<OverlapRange>& ovlps;
+	bool onlyNoOverhang;
 };

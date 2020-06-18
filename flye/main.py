@@ -7,6 +7,7 @@ Main logic of the package
 """
 
 from __future__ import print_function
+from __future__ import absolute_import
 import sys
 import os
 import logging
@@ -22,14 +23,17 @@ import flye.assembly.assemble as asm
 import flye.assembly.repeat_graph as repeat
 import flye.assembly.scaffolder as scf
 from flye.__version__ import __version__
+from flye.__build__ import __build__
 import flye.config.py_cfg as cfg
 from flye.config.configurator import setup_params
 from flye.utils.bytes2human import human2bytes, bytes2human
+from flye.utils.sam_parser import AlignmentException
 import flye.utils.fasta_parser as fp
 import flye.short_plasmids.plasmids as plas
 import flye.trestle.trestle as tres
 import flye.trestle.graph_resolver as tres_graph
 from flye.repeat_graph.repeat_graph import RepeatGraph
+from flye.six.moves import range
 
 logger = logging.getLogger()
 
@@ -51,17 +55,17 @@ class Job(object):
         self.log_file = None
 
     def run(self):
-        logger.info(">>>STAGE: {0}".format(self.name))
+        logger.info(">>>STAGE: %s", self.name)
 
     def save(self, save_file):
         Job.run_params["stage_name"] = self.name
 
-        with open(save_file, "w") as fp:
-            json.dump(Job.run_params, fp)
+        with open(save_file, "w") as f:
+            json.dump(Job.run_params, f)
 
     def load(self, save_file):
-        with open(save_file, "r") as fp:
-            data = json.load(fp)
+        with open(save_file, "r") as f:
+            data = json.load(f)
             if (not "pipeline_version" in data or
                     data["pipeline_version"] != cfg.vals["pipeline_version"]):
                 raise ResumeException("Inconsistent pipeline version")
@@ -69,11 +73,11 @@ class Job(object):
             Job.run_params = data
 
     def completed(self, save_file):
-        with open(save_file, "r") as fp:
-            data = json.load(fp)
+        with open(save_file, "r") as f:
+            dummy_data = json.load(f)
 
-            for file in self.out_files.values():
-                if not os.path.exists(file):
+            for file_path in self.out_files.values():
+                if not os.path.exists(file_path):
                     return False
 
             return True
@@ -117,7 +121,7 @@ class JobAssembly(Job):
                                         "please check if the read type and genome "
                                         "size parameters are correct")
         asm_len, asm_n50 = scf.short_statistics(self.assembly_filename)
-        logger.debug("Disjointigs length: {0}, N50: {1}".format(asm_len, asm_n50))
+        logger.debug("Disjointigs length: %d, N50: %d", asm_len, asm_n50)
 
 
 class JobShortPlasmidsAssembly(Job):
@@ -222,16 +226,16 @@ class JobContigger(Job):
 
 
 def _list_files(startpath, maxlevel=1):
-    for root, dirs, files in os.walk(startpath):
+    for root, _, files in os.walk(startpath):
         level = root.replace(startpath, "").count(os.sep)
         if level > maxlevel:
             continue
         indent = " " * 4 * (level)
-        logger.debug("{}{}/".format(indent, os.path.basename(root)))
+        logger.debug(indent + os.path.basename(root) + "/")
         subindent = " " * 4 * (level + 1)
         for f in files:
             fsize = bytes2human(os.path.getsize(os.path.join(root, f)))
-            logger.debug("{}{:12}{}".format(subindent, fsize, f))
+            logger.debug("%s%-12s%s", subindent, fsize, f)
 
 
 class JobFinalize(Job):
@@ -260,9 +264,9 @@ class JobFinalize(Job):
 
     def run(self):
         super(JobFinalize, self).run()
-        #shutil.copy2(self.contigs_file, self.out_files["contigs"])
-        shutil.copy2(self.graph_file, self.out_files["graph"])
-        shutil.copy2(self.polished_gfa, self.out_files["gfa"])
+        #shutil.copy(self.contigs_file, self.out_files["contigs"])
+        shutil.copy(self.graph_file, self.out_files["graph"])
+        shutil.copy(self.polished_gfa, self.out_files["gfa"])
 
         scaffolds = scf.generate_scaffolds(self.contigs_file, self.scaffold_links,
                                            self.out_files["assembly"])
@@ -282,7 +286,7 @@ class JobFinalize(Job):
         logger.debug("--------------------------")
         scf.generate_stats(self.repeat_stats, self.polished_stats, scaffolds,
                            self.out_files["stats"])
-        logger.info("Final assembly: {0}".format(self.out_files["assembly"]))
+        logger.info("Final assembly: %s", self.out_files["assembly"])
 
 
 class JobConsensus(Job):
@@ -309,7 +313,7 @@ class JobConsensus(Job):
         fp.write_fasta_dict(chunks, chunks_file)
 
         logger.info("Running Minimap2")
-        out_alignment = os.path.join(self.consensus_dir, "minimap.sam")
+        out_alignment = os.path.join(self.consensus_dir, "minimap.bam")
         aln.make_alignment(chunks_file, self.args.reads, self.args.threads,
                            self.consensus_dir, self.args.platform, out_alignment,
                            reference_mode=True, sam_output=True)
@@ -412,10 +416,10 @@ class JobTrestle(Job):
                                      fp.read_sequence_dict(resolved_repeats_seqs))
         except KeyboardInterrupt as e:
             raise
-        except Exception as e:
-            logger.warning("Caught unhandled exception: " + str(e))
-            logger.warning("Continuing to the next pipeline stage. "
-                           "Please submit a bug report along with the full log file")
+        #except Exception as e:
+        #    logger.warning("Caught unhandled exception: " + str(e))
+        #    logger.warning("Continuing to the next pipeline stage. "
+        #                   "Please submit a bug report along with the full log file")
 
         repeat_graph.dump_to_file(self.out_files["repeat_graph"])
         fp.write_fasta_dict(repeat_graph.edges_fasta,
@@ -448,7 +452,8 @@ def _create_job_list(args, work_dir, log_file):
     reads_alignment = jobs[-1].out_files["reads_alignment"]
 
     #Trestle: Resolve Unbridged Repeats
-    if not args.no_trestle and not args.meta and args.read_type == "raw":
+    #if not args.no_trestle and not args.meta and args.read_type == "raw":
+    if args.trestle:
         jobs.append(JobTrestle(args, work_dir, log_file,
                     repeat_graph, repeat_graph_edges,
                     reads_alignment))
@@ -506,7 +511,7 @@ def _run_polisher_only(args):
     Runs standalone polisher
     """
     logger.info("Running Flye polisher")
-    logger.debug("Cmd: {0}".format(" ".join(sys.argv)))
+    logger.debug("Cmd: %s", " ".join(sys.argv))
 
     pol.polish(args.polish_target, args.reads, args.out_dir,
                args.num_iters, args.threads, args.platform,
@@ -518,7 +523,8 @@ def _run(args):
     Runs the pipeline
     """
     logger.info("Starting Flye " + _version())
-    logger.debug("Cmd: {0}".format(" ".join(sys.argv)))
+    logger.debug("Cmd: %s", " ".join(sys.argv))
+    logger.debug("Python version: " + sys.version)
 
     for read_file in args.reads:
         if not os.path.exists(read_file):
@@ -527,8 +533,8 @@ def _run(args):
     save_file = os.path.join(args.out_dir, "params.json")
     jobs = _create_job_list(args, args.out_dir, args.log_file)
 
-    if args.stop_after and not args.stop_after in map(lambda j: j.name, jobs):
-        raise ResumeException("Stop after: unkown stage '{0}'"
+    if args.stop_after and not args.stop_after in [j.name for j in jobs]:
+        raise ResumeException("Stop after: unknown stage '{0}'"
                                 .format(args.stop_after))
 
     current_job = 0
@@ -543,7 +549,7 @@ def _run(args):
             job_to_resume = json.load(open(save_file, "r"))["stage_name"]
 
         can_resume = False
-        for i in xrange(len(jobs)):
+        for i in range(len(jobs)):
             if jobs[i].name == job_to_resume:
                 jobs[i].load(save_file)
                 current_job = i
@@ -557,7 +563,7 @@ def _run(args):
             raise ResumeException("Can't resume: stage {0} does not exist"
                                   .format(job_to_resume))
 
-    for i in xrange(current_job, len(jobs)):
+    for i in range(current_job, len(jobs)):
         jobs[i].save(save_file)
         jobs[i].run()
         if args.stop_after == jobs[i].name:
@@ -591,20 +597,21 @@ def _enable_logging(log_file, debug, overwrite):
 
 
 def _usage():
-    return ("flye (--pacbio-raw | --pacbio-corr | --nano-raw |\n"
+    return ("flye (--pacbio-raw | --pacbio-corr | --pacbio-hifi | --nano-raw |\n"
             "\t     --nano-corr | --subassemblies) file1 [file_2 ...]\n"
-            "\t     --genome-size SIZE --out-dir PATH\n"
+            "\t     --genome-size SIZE --out-dir PATH\n\n"
             "\t     [--threads int] [--iterations int] [--min-overlap int]\n"
-            "\t     [--meta] [--plasmids] [--no-trestle] [--polish-target]\n"
-            "\t     [--debug] [--version] [--help] [--resume] \n"
-            "\t     [--resume-from] [--stop-after]")
+            "\t     [--meta] [--plasmids] [--trestle] [--polish-target]\n"
+            "\t     [--keep-haplotypes] [--debug] [--version] [--help] \n"
+            "\t     [--resume] [--resume-from] [--stop-after]")
 
 
 def _epilog():
     return ("Input reads can be in FASTA or FASTQ format, uncompressed\n"
-            "or compressed with gz. Currently, raw and corrected reads\n"
-            "from PacBio and ONT are supported. Expected error rates are\n"
-            "<30% for raw and <2% for corrected reads. Additionally, the\n"
+            "or compressed with gz. Currently, PacBio (raw, corrected, HiFi)\n"
+            "and ONT reads (raw, corrected) are supported. Expected error rates are\n"
+            "<30% for raw, <3% for corrected, and <1% for HiFi. Note that Flye\n"
+            "was primarily developed to run on raw reads. Additionally, the\n"
             "--subassemblies option performs a consensus assembly of multiple\n"
             "sets of high-quality contigs. You may specify multiple\n"
             "files with reads (separated by spaces). Mixing different read\n"
@@ -618,35 +625,38 @@ def _epilog():
             "To reduce memory consumption for large genome assemblies,\n"
             "you can use a subset of the longest reads for initial disjointig\n"
             "assembly by specifying --asm-coverage option. Typically,\n"
-            "30x coverage is enough to produce good disjointigs.\n\n"
-            "You can separately run Flye polisher on a target sequence \n"
-            "using --polish-target option.")
+            "40x coverage is enough to produce good disjointigs.\n\n"
+            "You can run Flye polisher as a standalone tool using\n"
+            "--polish-target option.")
 
 
 def _version():
+    return __version__ + "-b" + str(__build__)
+    """
     repo_root = os.path.dirname((os.path.dirname(__file__)))
     try:
         git_label = subprocess.check_output(["git", "-C", repo_root, "describe"],
-                                            stderr=open(os.devnull, "w"))
+                                            stderr=open(os.devnull, "w")).decode()
         commit_id = git_label.strip("\n").rsplit("-", 1)[-1]
         return __version__ + "-" + commit_id
     except (subprocess.CalledProcessError, OSError):
         pass
     return __version__ + "-release"
+    """
 
 
 def main():
     def check_int_range(value, min_val, max_val, require_odd=False):
         ival = int(value)
         if ival < min_val or ival > max_val:
-             raise argparse.ArgumentTypeError("value should be in the "
+            raise argparse.ArgumentTypeError("value should be in the "
                             "range [{0}, {1}]".format(min_val, max_val))
         if require_odd and ival % 2 == 0:
             raise argparse.ArgumentTypeError("should be an odd number")
         return ival
 
     parser = argparse.ArgumentParser \
-        (description="Assembly of long and error-prone reads",
+        (description="Assembly of long reads with repeat graphs",
          formatter_class=argparse.RawDescriptionHelpFormatter,
          usage=_usage(), epilog=_epilog())
 
@@ -657,6 +667,9 @@ def main():
     read_group.add_argument("--pacbio-corr", dest="pacbio_corrected",
                         default=None, metavar="path", nargs="+",
                         help="PacBio corrected reads")
+    read_group.add_argument("--pacbio-hifi", dest="pacbio_hifi",
+                        default=None, metavar="path", nargs="+",
+                        help="PacBio HiFi reads")
     read_group.add_argument("--nano-raw", dest="nano_raw", nargs="+",
                         default=None, metavar="path",
                         help="ONT raw reads")
@@ -691,9 +704,12 @@ def main():
     parser.add_argument("--meta", action="store_true",
                         dest="meta", default=False,
                         help="metagenome / uneven coverage mode")
-    parser.add_argument("--no-trestle", action="store_true",
-                        dest="no_trestle", default=False,
-                        help="skip Trestle stage")
+    parser.add_argument("--keep-haplotypes", action="store_true",
+                        dest="keep_haplotypes", default=False,
+                        help="do not collapse alternative haplotypes")
+    parser.add_argument("--trestle", action="store_true",
+                        dest="trestle", default=False,
+                        help="enable Trestle [disabled]")
     parser.add_argument("--polish-target", dest="polish_target",
                         metavar="path", required=False,
                         help="run polisher on the target sequence")
@@ -725,6 +741,10 @@ def main():
         args.reads = args.pacbio_corrected
         args.platform = "pacbio"
         args.read_type = "corrected"
+    if args.pacbio_hifi:
+        args.reads = args.pacbio_hifi
+        args.platform = "pacbio"
+        args.read_type = "hifi"
     if args.nano_raw:
         args.reads = args.nano_raw
         args.platform = "nano"
@@ -761,10 +781,11 @@ def main():
         else:
             _run_polisher_only(args)
 
-    except (aln.AlignmentException, pol.PolishException,
+    except (AlignmentException, pol.PolishException,
             asm.AssembleException, repeat.RepeatException,
             ResumeException, fp.FastaError) as e:
         logger.error(e)
+        logger.error("Pipeline aborted")
         return 1
 
     return 0

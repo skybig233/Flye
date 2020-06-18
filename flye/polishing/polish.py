@@ -6,23 +6,25 @@
 Runs polishing binary in parallel and concatentes output
 """
 
+from __future__ import absolute_import
+from __future__ import division
 import logging
-import random
 import subprocess
 import os
 from collections import defaultdict
-from threading import Thread
 
 from flye.polishing.alignment import (make_alignment, get_contigs_info,
-                                      SynchronizedSamReader, merge_chunks,
-                                      split_into_chunks)
+                                      merge_chunks, split_into_chunks)
+from flye.utils.sam_parser import SynchronizedSamReader
 from flye.polishing.bubbles import make_bubbles
 import flye.utils.fasta_parser as fp
 from flye.utils.utils import which
 import flye.config.py_cfg as cfg
+from flye.six import iteritems
+from flye.six.moves import range
 
 
-POLISH_BIN = "flye-polish"
+POLISH_BIN = "flye-modules"
 
 logger = logging.getLogger()
 
@@ -37,7 +39,7 @@ def check_binaries():
                               "Did you run 'make'?")
     try:
         devnull = open(os.devnull, "w")
-        subprocess.check_call([POLISH_BIN, "-h"], stderr=devnull)
+        subprocess.check_call([POLISH_BIN, "polisher", "-h"], stderr=devnull)
     except subprocess.CalledProcessError as e:
         if e.returncode == -9:
             logger.error("Looks like the system ran out of memory")
@@ -64,8 +66,8 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
     prev_assembly = contig_seqs
     contig_lengths = None
     coverage_stats = None
-    for i in xrange(num_iters):
-        logger.info("Polishing genome ({0}/{1})".format(i + 1, num_iters))
+    for i in range(num_iters):
+        logger.info("Polishing genome (%d/%d)", i + 1, num_iters)
 
         #split into 1Mb chunks to reduce RAM usage
         #slightly vary chunk size between iterations
@@ -77,7 +79,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
 
         ####
         logger.info("Running minimap2")
-        alignment_file = os.path.join(work_dir, "minimap_{0}.sam".format(i + 1))
+        alignment_file = os.path.join(work_dir, "minimap_{0}.bam".format(i + 1))
         make_alignment(chunks_file, read_seqs, num_threads,
                        work_dir, error_mode, alignment_file,
                        reference_mode=True, sam_output=True)
@@ -92,7 +94,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
                          error_mode, num_threads,
                          bubbles_file)
 
-        logger.info("Alignment error rate: {0}".format(mean_aln_error))
+        logger.info("Alignment error rate: %f", mean_aln_error)
         consensus_out = os.path.join(work_dir, "consensus_{0}.fasta".format(i + 1))
         polished_file = os.path.join(work_dir, "polished_{0}.fasta".format(i + 1))
         if os.path.getsize(bubbles_file) == 0:
@@ -123,7 +125,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
     #merge information from chunks
     contig_lengths = merge_chunks(contig_lengths, fold_function=sum)
     coverage_stats = merge_chunks(coverage_stats,
-                                  fold_function=lambda l: sum(l) / len(l))
+                                  fold_function=lambda l: sum(l) // len(l))
 
     with open(stats_file, "w") as f:
         f.write("#seq_name\tlength\tcoverage\n")
@@ -145,7 +147,7 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
     """
     logger.debug("Generating polished GFA")
 
-    alignment_file = os.path.join(work_dir, "edges_aln.sam")
+    alignment_file = os.path.join(work_dir, "edges_aln.bam")
     polished_dict = fp.read_sequence_dict(polished_contigs)
     make_alignment(polished_contigs, [edges_file], num_threads,
                    work_dir, error_mode, alignment_file,
@@ -153,7 +155,6 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
     aln_reader = SynchronizedSamReader(alignment_file,
                                        polished_dict,
                                        cfg.vals["max_read_coverage"])
-    aln_reader.init_reading()
     aln_by_edge = defaultdict(list)
 
     #getting one best alignment for each contig
@@ -161,7 +162,7 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
         _, ctg_aln = aln_reader.get_chunk()
         for aln in ctg_aln:
             aln_by_edge[aln.qry_id].append(aln)
-    aln_reader.stop_reading()
+    aln_reader.close()
 
     MIN_CONTAINMENT = 0.9
     updated_seqs = 0
@@ -181,7 +182,7 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
                 new_seq = fp.reverse_complement(new_seq)
 
             #print edge, main_aln.qry_len, len(new_seq), main_aln.qry_start, main_aln.qry_end
-            if float(len(new_seq)) / aln.qry_len > MIN_CONTAINMENT:
+            if len(new_seq) / aln.qry_len > MIN_CONTAINMENT:
                 edges_dict[edge] = new_seq
                 updated_seqs += 1
 
@@ -201,8 +202,8 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
             else:
                 gfa_polished.write(line)
 
-    logger.debug("{0} sequences remained unpolished"
-                    .format(len(edges_dict) - updated_seqs))
+    logger.debug("%d sequences remained unpolished",
+                 len(edges_dict) - updated_seqs)
     os.remove(alignment_file)
 
 
@@ -227,18 +228,18 @@ def filter_by_coverage(args, stats_in, contigs_in, stats_out, contigs_out):
             sum_cov += ctg_cov * ctg_len
             sum_length += ctg_len
 
-    mean_coverage = int(float(sum_cov) / sum_length)
+    mean_coverage = int(sum_cov / sum_length)
     coverage_threshold = None
     if args.read_type == "subasm":
         coverage_threshold = SUBASM_MIN_COVERAGE
     elif args.meta:
         coverage_threshold = HARD_MIN_COVERAGE
     else:
-        coverage_threshold = int(round(float(mean_coverage) /
+        coverage_threshold = int(round(mean_coverage /
                                        RELATIVE_MIN_COVERAGE))
         coverage_threshold = max(HARD_MIN_COVERAGE, coverage_threshold)
-    logger.debug("Mean contig coverage: {0}, selected threshold: {1}"
-                    .format(mean_coverage, coverage_threshold))
+    logger.debug("Mean contig coverage: %d, selected threshold: %d",
+                 mean_coverage, coverage_threshold)
 
     filtered_num = 0
     filtered_seq = 0
@@ -249,8 +250,8 @@ def filter_by_coverage(args, stats_in, contigs_in, stats_out, contigs_out):
         else:
             filtered_num += 1
             filtered_seq += ctg_stats[hdr][0]
-    logger.debug("Filtered {0} contigs of total length {1}"
-                    .format(filtered_num, filtered_seq))
+    logger.debug("Filtered %d contigs of total length %d",
+                 filtered_num, filtered_seq)
 
     fp.write_fasta_dict(good_fasta, contigs_out)
     with open(stats_out, "w") as f:
@@ -265,7 +266,7 @@ def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
     """
     Invokes polishing binary
     """
-    cmdline = [POLISH_BIN, "--bubbles", bubbles_in, "--subs-mat", subs_matrix,
+    cmdline = [POLISH_BIN, "polisher", "--bubbles", bubbles_in, "--subs-mat", subs_matrix,
                "--hopo-mat", hopo_matrix, "--out", consensus_out,
                "--threads", str(num_threads)]
     if not output_progress:
@@ -301,10 +302,10 @@ def _compose_sequence(consensus_file):
 
     polished_fasta = {}
     polished_stats = {}
-    for ctg_id, seqs in consensuses.iteritems():
-        sorted_seqs = map(lambda p: p[1], sorted(seqs, key=lambda p: p[0]))
+    for ctg_id, seqs in iteritems(consensuses):
+        sorted_seqs = [p[1] for p in sorted(seqs, key=lambda p: p[0])]
         concat_seq = "".join(sorted_seqs)
-        mean_coverage = sum(coverage[ctg_id]) / len(coverage[ctg_id])
+        #mean_coverage = sum(coverage[ctg_id]) / len(coverage[ctg_id])
         polished_fasta[ctg_id] = concat_seq
         polished_stats[ctg_id] = len(concat_seq)
 

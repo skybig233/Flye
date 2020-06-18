@@ -39,11 +39,22 @@ namespace
 		int32_t pos;
 	};
 
+	template<class T, class KeyFn>
+	void sortByKey(std::vector<T>& container, KeyFn keyFn)
+	{
+		std::sort(container.begin(), container.end(),
+				  [keyFn](const T& k1, const T& k2)
+				  {return keyFn(k1) < keyFn(k2);});
+	}
 }
 
-bool GraphEdge::isTip() const
+bool GraphEdge::isRightTerminal() const
 {
-	return nodeLeft->inEdges.empty() || nodeRight->outEdges.empty();
+	for (GraphEdge* edge : this->nodeRight->outEdges)
+	{
+		if (!edge->isLooped()) return false;
+	}
+	return true;
 }
 
 std::unordered_set<GraphEdge*> GraphEdge::adjacentEdges()
@@ -61,22 +72,26 @@ void RepeatGraph::build(OverlapDetector::MatchMode matchMode,
 						float maxOvlpDivergence)
 {
 	//getting overlaps
-	VertexIndex asmIndex(_asmSeqs, 
-						 (int)Config::get("repeat_graph_kmer_sample"));
-	asmIndex.countKmers(/*min freq*/ 1, /*genome size*/ 0);
-	asmIndex.setRepeatCutoff(/*min freq*/ 1);
-	asmIndex.buildIndex(/*min freq*/ 2);
+	VertexIndex asmIndex(_asmSeqs, (int)Config::get("repeat_graph_kmer_sample"));
+
+	bool useMinimizers = Config::get("use_minimizers");
+	int minWnd = useMinimizers ? Config::get("minimizer_window") : 1;
+	asmIndex.buildIndexMinimizers(/*min freq*/ 1, minWnd);
+
+	//asmIndex.countKmers(/*min freq*/ 1, /*genome size*/ 0);
+	//asmIndex.buildIndex(/*min freq*/ 1);
 
 	const int DEFAULT_OVERHANG = 50;
 	//float badEndAdj = (float)Config::get("repeat_graph_ovlp_end_adjust");
 	OverlapDetector asmOverlapper(_asmSeqs, asmIndex, 
 								  (int)Config::get("maximum_jump"), 
 								  Parameters::get().minimumOverlap,
-								  DEFAULT_OVERHANG, /*all overlaps*/ 0,
-								  /*keep alignment*/ true, /*only max*/ false,
+								  DEFAULT_OVERHANG, /*keep alignment*/ true, 
+								  /*only max*/ false,
 								  maxOvlpDivergence,
-								  /* no bad end*/ 0, /*nucl alignment*/ true,
-								  matchMode);
+								  /*nucl alignment*/ true, 
+								  /*partition bad map*/ true,
+								  (bool)Config::get("hpc_scoring_on"), matchMode);
 
 	OverlapContainer asmOverlaps(asmOverlapper, _asmSeqs);
 	asmOverlaps.findAllOverlaps();
@@ -89,8 +104,7 @@ void RepeatGraph::build(OverlapDetector::MatchMode matchMode,
 	GraphProcessor proc(*this, _asmSeqs);
 	proc.simplify();
 	this->logEdges();
-	this->updateEdgeSequences();
-	//this->markChimericEdges();
+	//this->updateEdgeSequences();
 }
 
 void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
@@ -129,9 +143,7 @@ void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
 	//only cosider X coordinates for now
 	for (auto& seqPoints : endpoints)
 	{
-		std::sort(seqPoints.second.begin(), seqPoints.second.end(),
-				  [](const SetPoint2d* p1, const SetPoint2d* p2)
-				  {return p1->data.curPos < p2->data.curPos;});
+		sortByKey(seqPoints.second, [](SetPoint2d* const &p){return p->data.curPos;});
 
 		for (size_t i = 0; i < seqPoints.second.size() - 1; ++i)
 		{
@@ -200,11 +212,8 @@ void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
 		}
 
 		//Finally, cluster the projected points based on Y coordinates
-		std::sort(extCoords.begin(), extCoords.end(),
-				  [](const SetPoint2d* p1, const SetPoint2d* p2)
-				  {return (p1->data.extId != p2->data.extId) ? 
-				  		   p1->data.extId < p2->data.extId :
-						   p1->data.extPos < p2->data.extPos;});
+		sortByKey(extCoords, [](SetPoint2d* const &p)
+				  {return std::make_pair(p->data.extId, p->data.extPos);});
 		for (size_t i = 0; i < extCoords.size() - 1; ++i)
 		{
 			auto* p1 = extCoords[i];
@@ -286,7 +295,7 @@ void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
 					 complements[toMerge[i + 1]]);
 		}
 	}
-	
+
 	//Generating final gluepoints, we might need to additionally
 	//split long clusters into parts (tandem repeats)
 	size_t pointId = 0;
@@ -364,7 +373,7 @@ void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
 		}
 	}
 
-	//ensure that coordinates ont forward and reverse contig copies are symmetric
+	//ensure that coordinates on forward and reverse contig copies are symmetric
 	for (auto& seq : _asmSeqs.iterSeqs())
 	{
 		if (!seq.id.strand()) continue;
@@ -421,7 +430,7 @@ void RepeatGraph::getGluepoints(OverlapContainer& asmOverlaps)
 //as many iterations as needed
 void RepeatGraph::checkGluepointProjections(const OverlapContainer& asmOverlaps)
 {
-	size_t MAX_ITER = 1000;
+	size_t MAX_ITER = 100;
 	for (size_t i = 0; i < MAX_ITER; ++i)
 	{
 		std::unordered_map<FastaRecord::Id, 
@@ -441,18 +450,21 @@ void RepeatGraph::checkGluepointProjections(const OverlapContainer& asmOverlaps)
 					 mergedGluepoints[idTwo]);
 		};
 
-		for (auto& gp : _gluePoints)
+		//for (auto& gp : _gluePoints)
+		for (auto& seq : _asmSeqs.iterSeqs())
 		{
-			if (!gp.first.strand()) continue;
+			if (!seq.id.strand()) continue;
+			if (!_gluePoints.count(seq.id)) continue;
+			auto& gp = _gluePoints[seq.id];
 
-			for (size_t i = 0; i < gp.second.size(); ++i)
+			for (size_t i = 0; i < gp.size(); ++i)
 			{
-				GluePoint pt = gp.second[i];
+				GluePoint pt = gp[i];
 				GluePoint ptCompl = 
-					_gluePoints[pt.seqId.rc()][gp.second.size() - i - 1];
+					_gluePoints[pt.seqId.rc()][gp.size() - i - 1];
 
 				for (auto& interval : asmOverlaps
-						.getCoveringOverlaps(gp.first, pt.position - 1,  
+						.getCoveringOverlaps(seq.id, pt.position - 1,  
 										   	 pt.position + 1))
 				{
 					auto& ovlp = *interval.value;
@@ -485,11 +497,11 @@ void RepeatGraph::checkGluepointProjections(const OverlapContainer& asmOverlaps)
 							isValid = true;
 						}
 					}
-					for (auto& otherPt : addedGluepoints[ovlp.extId])
+					/*for (auto& otherPt : addedGluepoints[ovlp.extId])
 					{
 						if (abs(otherPt.position - projectedPos) <=
 							_maxSeparation) isValid = true;
-					}
+					}*/
 
 					if (!isValid) 
 					{
@@ -508,20 +520,36 @@ void RepeatGraph::checkGluepointProjections(const OverlapContainer& asmOverlaps)
 		int totalAdded = 0;
 		for (auto& ptVec : addedGluepoints)
 		{
-			totalAdded += ptVec.second.size();
-			std::copy(ptVec.second.begin(), ptVec.second.end(),
-					  std::back_inserter(_gluePoints[ptVec.first]));
-			std::sort(_gluePoints[ptVec.first].begin(), 
-					  _gluePoints[ptVec.first].end(),
-					  [](const GluePoint& p1, const GluePoint& p2)
-						{return p1.position < p2.position;});
+			if (!ptVec.first.strand()) continue;
+
+			std::vector<size_t> permutation;
+			for (size_t i = 0; i < ptVec.second.size(); ++i) permutation.push_back(i);
+			sortByKey(permutation, [&ptVec](size_t const &i){return ptVec.second[i].position;});
+
+			int32_t lastAdded = -1;
+			for (size_t pid : permutation)
+			{
+				GluePoint pt = ptVec.second[pid];
+				GluePoint complPt = addedGluepoints[ptVec.first.rc()][pid];
+				if (lastAdded == -1 || abs(pt.position - lastAdded) > _maxSeparation)
+				{
+					_gluePoints[ptVec.first].push_back(pt);
+					_gluePoints[ptVec.first.rc()].push_back(complPt);
+					lastAdded = pt.position;
+					++totalAdded;
+				}
+			}
+			sortByKey(_gluePoints[ptVec.first], [](const GluePoint& gp){return gp.position;});
+			sortByKey(_gluePoints[ptVec.first.rc()], [](const GluePoint& gp){return gp.position;});
 		}
 		Logger::get().debug() << "Added " << totalAdded 
 			<< " gluepoint projections";
 
-		for (auto& gp : _gluePoints)
+		//for (auto& gp : _gluePoints)
+		for (auto& seq : _asmSeqs.iterSeqs())
 		{
-			for (auto& point : gp.second)
+			if (!_gluePoints.count(seq.id)) continue;
+			for (auto& point : _gluePoints[seq.id])
 			{
 				if (mergedGluepoints.count(point.pointId))
 				{
@@ -669,8 +697,7 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 	Logger::get().debug() << "Initializing edges";
 
 	typedef std::pair<GraphNode*, GraphNode*> NodePair;
-	std::unordered_map<NodePair, std::vector<EdgeSequence>, 
-					   pairhash> parallelSegments;
+	std::unordered_map<NodePair, std::vector<EdgeSequence>, pairhash> parallelSegments;
 	std::unordered_map<NodePair, NodePair, pairhash> complEdges;
 
 	std::unordered_map<size_t, GraphNode*> nodeIndex;
@@ -683,24 +710,27 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 		return nodeIndex[nodeId];
 	};
 
-	for (auto& seqEdgesPair : _gluePoints)
+	//for (auto& seqEdgesPair : _gluePoints)
+	size_t checksum = 0;
+	for (auto& seq : _asmSeqs.iterSeqs())
 	{
-		if (!seqEdgesPair.first.strand()) continue;
-		if (seqEdgesPair.second.size() < 2) continue;
+		if (!seq.id.strand()) continue;
+		if (!_gluePoints.count(seq.id)) continue;
+		auto& seqGluepoints = _gluePoints[seq.id];
+		if (seqGluepoints.size() < 2) continue;
+		FastaRecord::Id complId = seq.id.rc();
 
-		FastaRecord::Id complId = seqEdgesPair.first.rc();
-
-		if (seqEdgesPair.second.size() != _gluePoints[complId].size())
+		if (seqGluepoints.size() != _gluePoints[complId].size())
 		{
 			throw std::runtime_error("Graph is not symmetric");
 		}
 
-		for (size_t i = 0; i < seqEdgesPair.second.size() - 1; ++i)
+		for (size_t i = 0; i < seqGluepoints.size() - 1; ++i)
 		{
-			GluePoint gpLeft = seqEdgesPair.second[i];
-			GluePoint gpRight = seqEdgesPair.second[i + 1];
+			GluePoint gpLeft = seqGluepoints[i];
+			GluePoint gpRight = seqGluepoints[i + 1];
 
-			size_t complPos = seqEdgesPair.second.size() - i - 2;
+			size_t complPos = seqGluepoints.size() - i - 2;
 			GluePoint complLeft = _gluePoints[complId][complPos];
 			GluePoint complRight = _gluePoints[complId][complPos + 1];
 
@@ -721,8 +751,12 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 
 			complEdges[fwdPair] = revPair;
 			complEdges[revPair] = fwdPair;
+			//Logger::get().debug() << checksum << " " << gpRight.position - gpLeft.position;
+			checksum += (gpRight.position - gpLeft.position) * 
+						(gpRight.position - gpLeft.position);
 		}
 	}
+	Logger::get().debug() << "Edges length checksum: " << checksum;
 
 	auto segIntersect = [] (const EdgeSequence& s, int32_t intBegin, 
 							int32_t intEnd)
@@ -731,30 +765,34 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 						std::max(intBegin, s.origSeqStart), 0);
 	};
 
+	//sort nodes wrt to their ids to make it deterministic
+	std::vector<NodePair> sortedKeys;
+	for (auto& it : parallelSegments) sortedKeys.push_back(it.first);
+	sortByKey(sortedKeys, [](const NodePair& np)
+			  {return std::make_pair(np.first->nodeId, np.second->nodeId);});
+
 	std::unordered_set<NodePair, pairhash> usedPairs;
 	size_t singletonsFiltered = 0;
-	for (auto& nodePairSeqs : parallelSegments)
+	for (auto& nodePair : sortedKeys)
 	{
-		if (usedPairs.count(nodePairSeqs.first)) continue;
-		usedPairs.insert(complEdges[nodePairSeqs.first]);
+		if (usedPairs.count(nodePair)) continue;
+		auto& nodePairSeqs = parallelSegments[nodePair];
+		usedPairs.insert(complEdges[nodePair]);
 
 		//creating set and building index
-		SetVec<EdgeSequence*> segmentSets;
 		typedef SetNode<EdgeSequence*> SetSegment;
+		SetVec<EdgeSequence*> segmentSets;
 		std::unordered_map<FastaRecord::Id, 
 						   std::vector<SetSegment*>> segmentIndex;
-		for (auto& seg : nodePairSeqs.second) 
+		for (auto& seg : nodePairSeqs) 
 		{
-			segmentSets.push_back(new SetNode<EdgeSequence*>(&seg));
+			segmentSets.push_back(new SetSegment(&seg));
 			segmentIndex[seg.origSeqId].push_back(segmentSets.back());
 		}
 		for (auto& seqSegments : segmentIndex)
 		{
-			std::sort(seqSegments.second.begin(), seqSegments.second.end(),
-					  [](const SetSegment* s1, const SetSegment* s2)
-					  {return s1->data->origSeqStart < s2->data->origSeqStart;});
+			sortByKey(seqSegments.second, [](SetSegment* const &s){return s->data->origSeqStart;});
 		}
-
 
 		//cluster segments based on their overlaps
 		for (auto& setOne : segmentSets)
@@ -875,14 +913,31 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 			}
 		}*/
 
+		//sort clusters for determinism
+		std::unordered_map<SetSegment*, 
+						   std::pair<FastaRecord::Id, int32_t>> sortOrder;
+		for (auto& cl : edgeClusters)
+		{
+			EdgeSequence* minEdge = 
+				*std::min_element(cl.second.begin(), cl.second.end(),
+						  [](EdgeSequence* const e1, EdgeSequence* const e2)
+						     {return std::make_pair(e1->origSeqId, e1->origSeqStart) <
+								     std::make_pair(e2->origSeqId, e2->origSeqStart);});
+			sortOrder[cl.first] = std::make_pair(minEdge->origSeqId, minEdge->origSeqStart);
+		}
+		std::vector<SetSegment*> sortedKeysCl;
+		for (auto& it : edgeClusters) sortedKeysCl.push_back(it.first);
+		sortByKey(sortedKeysCl, [&sortOrder](SetSegment* const n){return sortOrder[n];});
+
 		//add edge for each cluster
 		std::vector<EdgeSequence> usedSegments;
-		for (auto& edgeClust : edgeClusters)
+		for (auto& clustId : sortedKeysCl)
 		{
+			auto& matchEdges = edgeClusters[clustId];
 			//filtering segments that were not glued, but covered by overlaps
-			if (edgeClusters.size() > 1 && edgeClust.second.size() == 1)
+			if (edgeClusters.size() > 1 && matchEdges.size() == 1)
 			{
-				auto seg = edgeClust.second.front();
+				auto seg = matchEdges.front();
 				bool covered = false;
 				for (auto& interval : asmOverlaps
 						.getCoveringOverlaps(seg->origSeqId, seg->origSeqStart,
@@ -901,14 +956,14 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 			}
 
 			//in case we have complement edges within the node pair
-			auto& anySegment = *edgeClust.second.front();
+			auto& anySegment = *matchEdges.front();
 			if (std::find(usedSegments.begin(), usedSegments.end(), anySegment) 
 						  != usedSegments.end()) continue;
 
-			GraphNode* leftNode = nodePairSeqs.first.first;
-			GraphNode* rightNode = nodePairSeqs.first.second;
+			GraphNode* leftNode = nodePair.first;
+			GraphNode* rightNode = nodePair.second;
 			GraphEdge newEdge(leftNode, rightNode, FastaRecord::Id(_nextEdgeId));
-			for (auto& seg : edgeClust.second)
+			for (auto& seg : matchEdges)
 			{
 				newEdge.seqSegments.push_back(*seg);
 				usedSegments.push_back(seg->complement());
@@ -922,11 +977,11 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 			this->addEdge(std::move(newEdge));
 			if (!selfComplement)
 			{
-				leftNode = complEdges[nodePairSeqs.first].first;
-				rightNode = complEdges[nodePairSeqs.first].second;
+				leftNode = complEdges[nodePair].first;
+				rightNode = complEdges[nodePair].second;
 				GraphEdge* complEdge = this->addEdge(GraphEdge(leftNode, rightNode, 
 												FastaRecord::Id(_nextEdgeId + 1)));
-				for (auto& seg : edgeClust.second)
+				for (auto& seg : matchEdges)
 				{
 					complEdge->seqSegments.push_back(seg->complement());
 				}
@@ -954,26 +1009,27 @@ void RepeatGraph::logEdges()
 	}
 	for (auto& seqEdgesPair : sequenceEdges)
 	{
-		std::sort(seqEdgesPair.second.begin(), seqEdgesPair.second.end(),
-				  [](const SegEdgePair& s1, const SegEdgePair& s2)
-				  	{return s1.first->origSeqStart < s2.first->origSeqStart;});
+		sortByKey(seqEdgesPair.second, [](const SegEdgePair& s){return s.first->origSeqStart;});
 	}
 
-	for (auto& seqEdgesPair : sequenceEdges)
+	//for (auto& seqEdgesPair : sequenceEdges)
+	for (auto& seq : _asmSeqs.iterSeqs())
 	{
-		if (!seqEdgesPair.first.strand()) continue;
+		if (!seq.id.strand()) continue;
+		if (!sequenceEdges.count(seq.id)) continue;
+		auto& seqEdgesVec = sequenceEdges[seq.id];
 
 		size_t begin = 0;
-		while(begin < seqEdgesPair.second.size())
+		while(begin < seqEdgesVec.size())
 		{
 			size_t end = begin + 1;
-			while(end < seqEdgesPair.second.size() &&
-				 	seqEdgesPair.second[begin].second->edgeId ==
-				   	seqEdgesPair.second[end].second->edgeId) ++end;
+			while(end < seqEdgesVec.size() &&
+				 	seqEdgesVec[begin].second->edgeId ==
+				   	seqEdgesVec[end].second->edgeId) ++end;
 
-			EdgeSequence* beginSeg = seqEdgesPair.second[begin].first;
-			EdgeSequence* endSeg = seqEdgesPair.second[end - 1].first;
-			GraphEdge* edge = seqEdgesPair.second[begin].second;
+			EdgeSequence* beginSeg = seqEdgesVec[begin].first;
+			EdgeSequence* endSeg = seqEdgesVec[end - 1].first;
+			GraphEdge* edge = seqEdgesVec[begin].second;
 
 			std::string unique = edge->seqSegments.size() == 1 ? "*" : " ";
 			std::string mult = end - begin == 1 ? "" : 
@@ -984,7 +1040,8 @@ void RepeatGraph::logEdges()
 								  << beginSeg->origSeqStart << "\t" 
 								  << endSeg->origSeqEnd << "\t"
 								  << endSeg->origSeqEnd - beginSeg->origSeqStart << "\t"
-								  << mult;
+								  << mult 
+								  << "\t" << edge->nodeLeft->nodeId << "\t" << edge->nodeRight->nodeId;
 			begin = end;
 		}
 	}
@@ -1043,13 +1100,137 @@ void RepeatGraph::storeGraph(const std::string& filename)
 		fout << "Edge\t" << edge->edgeId << "\t" 
 			<< nodeIds[edge->nodeLeft] << "\t" << nodeIds[edge->nodeRight]
 			<< "\t" << edge->repetitive << "\t" << edge->selfComplement 
-			<< "\t" << edge->resolved << "\t" << edge->meanCoverage << "\n";
+			<< "\t" << edge->resolved << "\t" << edge->meanCoverage 
+			<< "\t" << edge->altGroupId << "\n";
 
 		for (auto& seg : edge->seqSegments)
 		{
 			fout << "\tSequence\t";
 			seg.dump(fout, *_edgeSeqsContainer);
 			fout << "\n";
+		}
+	}
+}
+
+void RepeatGraph::validateGraph()
+{
+	//check nodes / edges references
+	for (auto& edge : this->iterEdges())
+	{
+		if (!std::count(edge->nodeLeft->outEdges.begin(),
+						edge->nodeLeft->outEdges.end(), edge))
+		{
+			Logger::get().warning() << "Inconsistent node-edge reference " 
+				<< edge->edgeId.signedId();
+		}
+		if (!std::count(edge->nodeRight->inEdges.begin(),
+						edge->nodeRight->inEdges.end(), edge))
+		{
+			Logger::get().warning() << "Inconsistent node-edge reference " 
+				<< edge->edgeId.signedId();
+		}
+	}
+	for (auto& node : this->iterNodes())
+	{
+		for (GraphEdge* edge : node->outEdges)
+		{
+			if (edge->nodeLeft != node)
+			{
+				Logger::get().warning() << "Inconsistent node-edge reference " 
+					<< edge->edgeId.signedId();
+			}
+		}
+		for (GraphEdge* edge : node->inEdges)
+		{
+			if (edge->nodeRight != node)
+			{
+				Logger::get().warning() << "Inconsistent node-edge reference " 
+					<< edge->edgeId.signedId();
+			}
+		}
+	}
+
+	//check that complementary edges exist
+	for (GraphNode* node : this->iterNodes())
+	{
+		for (GraphEdge* edge : node->outEdges)
+		{
+			if (!_idToEdge.count(edge->edgeId.rc())) 
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " not paired";
+			}
+		}
+		for (GraphEdge* edge : node->inEdges)
+		{
+			if (!_idToEdge.count(edge->edgeId.rc())) 
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " not paired";
+			}
+		}
+	}
+
+	//check the symmetry:
+	for (GraphNode* node : this->iterNodes())
+	{
+		GraphNode* complNode = this->complementNode(node);
+
+		for (GraphEdge* edge : node->outEdges)
+		{
+			if (this->complementEdge(edge)->nodeRight != complNode)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
+		}
+		for (GraphEdge* edge : node->inEdges)
+		{
+			if (this->complementEdge(edge)->nodeLeft != complNode)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
+		}
+	}
+
+	for (auto& edge : this->iterEdges())
+	{
+		for (auto& nextEdge : edge->nodeRight->outEdges)
+		{
+			if (this->complementEdge(edge)->nodeLeft !=
+				this->complementEdge(nextEdge)->nodeRight)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
+		}
+		for (auto& nextEdge : edge->nodeRight->inEdges)
+		{
+			if (this->complementEdge(edge)->nodeLeft !=
+				this->complementEdge(nextEdge)->nodeLeft)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
+		}
+		for (auto& prevEdge : edge->nodeLeft->outEdges)
+		{
+			if (this->complementEdge(edge)->nodeRight !=
+				this->complementEdge(prevEdge)->nodeRight)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
+		}
+		for (auto& prevEdge : edge->nodeLeft->inEdges)
+		{
+			if (this->complementEdge(edge)->nodeRight !=
+				this->complementEdge(prevEdge)->nodeLeft)
+			{
+				Logger::get().warning() << "Edge " + std::to_string(edge->edgeId.signedId()) 
+										 + " brakes symmetry";
+			}
 		}
 	}
 }
@@ -1064,11 +1245,12 @@ void RepeatGraph::loadGraph(const std::string& filename)
 
 	std::unordered_map<size_t, GraphNode*> idToNode;
 	GraphEdge* currentEdge = 0;
-	while(!fin.eof())
+	while(true)
 	{
 		std::string buffer;
 		fin >> buffer;
-		if (buffer.empty()) continue;
+		if (fin.eof()) break;
+		if (!fin.good()) throw std::runtime_error("Error parsing: " + filename);
 
 		if (buffer == "Edge")
 		{
@@ -1089,7 +1271,9 @@ void RepeatGraph::loadGraph(const std::string& filename)
 			GraphEdge edge(idToNode[leftNode], idToNode[rightNode],
 						   FastaRecord::Id(edgeId));
 			fin >> edge.repetitive >> edge.selfComplement 
-				>> edge.resolved >> edge.meanCoverage;
+				>> edge.resolved >> edge.meanCoverage
+				>> edge.altGroupId;
+			if (edge.altGroupId != -1) edge.altHaplotype = true;
 			currentEdge = this->addEdge(std::move(edge));
 		}
 		else if (buffer == "Sequence")
@@ -1116,13 +1300,21 @@ EdgeSequence RepeatGraph::addEdgeSequence(const DnaSequence& sequence,
 
 void RepeatGraph::updateEdgeSequences()
 {
-	for (auto& edge : _graphEdges)
+	for (auto& edge : this->iterEdges())
 	{
 		if (!edge->edgeId.strand()) continue;
 
+		auto segmentsToAdd = edge->seqSegments;
+		GraphEdge* complEdge = this->complementEdge(edge);
+		edge->seqSegments.clear();
+		complEdge->seqSegments.clear();
+
 		int num = 0;
-		for (auto& edgeSeq : edge->seqSegments)
+		for (const auto& edgeSeq : segmentsToAdd)
 		{
+			if (edge->selfComplement && 
+				!edgeSeq.origSeqId.strand()) continue;
+
 			size_t len = edgeSeq.origSeqEnd - edgeSeq.origSeqStart;
 			auto subSeq = _asmSeqs.getSeq(edgeSeq.origSeqId)
 										.substr(edgeSeq.origSeqStart, len);
@@ -1134,11 +1326,14 @@ void RepeatGraph::updateEdgeSequences()
 				std::to_string(edgeSeq.origSeqEnd);
 			auto& newRec = _edgeSeqsContainer->addSequence(subSeq, description);
 
-			edgeSeq.edgeSeqId = newRec.id;
-			edgeSeq.seqLen = newRec.sequence.length();
+			EdgeSequence newSeq = edgeSeq;
+			newSeq.edgeSeqId = newRec.id;
+			newSeq.seqLen = newRec.sequence.length();
+			edge->seqSegments.push_back(newSeq);
+			complEdge->seqSegments.push_back(newSeq.complement());
 		}
 
-		if (!edge->selfComplement)
+		/*if (!edge->selfComplement)
 		{
 			GraphEdge* complEdge = this->complementEdge(edge);
 			complEdge->seqSegments.clear();
@@ -1146,7 +1341,7 @@ void RepeatGraph::updateEdgeSequences()
 			{
 				complEdge->seqSegments.push_back(seq.complement());
 			}
-		}
+		}*/
 	}
 	_edgeSeqsContainer->buildPositionIndex();
 }
@@ -1155,7 +1350,9 @@ RepeatGraph::~RepeatGraph()
 {
 	std::unordered_set<GraphEdge*> toRemove;
 	for (auto& edge : this->iterEdges()) toRemove.insert(edge);
-	for (auto edge : toRemove) this->removeEdge(edge);
+	for (auto& edge : _deletedEdges) toRemove.insert(edge);
+	for (auto edge : toRemove) delete edge;
+
 	for (auto node : _graphNodes) delete node;
-	_graphNodes.clear();
+	for (auto node : _deletedNodes) delete node;
 }

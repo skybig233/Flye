@@ -35,7 +35,7 @@ bool ChimeraDetector::isChimeric(FastaRecord::Id readId,
 	if (!_chimeras.contains(readId))
 	{
 		bool result = this->testReadByCoverage(readId, readOvlps);
-		for (const auto& ovlp : readOvlps)
+		for (const auto& ovlp : IterNoOverhang(readOvlps))
 		{
 			if (ovlp.curId == ovlp.extId.rc()) 
 			{
@@ -74,8 +74,7 @@ void ChimeraDetector::estimateGlobalCoverage()
 	for (const auto& seq : _seqContainer.iterSeqs())
 	{
 		if (rand() % sampleRate) continue;
-		const auto& overlaps = _ovlpContainer.lazySeqOverlaps(seq.id);
-		auto coverage = this->getReadCoverage(seq.id, overlaps);
+		auto coverage = this->getReadCoverage(seq.id, _ovlpContainer.lazySeqOverlaps(seq.id));
 		bool nonZero = false;
 		for (auto c : coverage) nonZero |= (c != 0);
 		if (!nonZero) continue;
@@ -109,7 +108,6 @@ std::vector<int32_t>
 									 const std::vector<OverlapRange>& readOverlaps)
 {
 	static const int WINDOW = Config::get("chimera_window");
-	//const int FLANK = (int)Config::get("maximum_overhang") / WINDOW;
 	const int FLANK = 1;
 
 	std::vector<int> coverage;
@@ -117,7 +115,7 @@ std::vector<int32_t>
 	if (numWindows - 2 * FLANK <= 0) return {0};
 
 	coverage.assign(numWindows - 2 * FLANK, 0);
-	for (const auto& ovlp : readOverlaps)
+	for (const auto& ovlp : IterNoOverhang(readOverlaps))
 	{
 		if (ovlp.curId == ovlp.extId.rc() ||
 			ovlp.curId == ovlp.extId) continue;
@@ -127,12 +125,8 @@ std::vector<int32_t>
 		for (int pos = ovlp.curBegin / WINDOW + FLANK; 		
 			 pos <= ovlp.curEnd / WINDOW - FLANK; ++pos)
 		{
-			if (pos - FLANK >= 0 && 					//shouldn't happen, but just in case..
-				pos - FLANK < (int)coverage.size())
-			{
-				//assert(pos - FLANK >= 0 && pos - FLANK < (int)coverage.size());
-				++coverage[pos - FLANK];
-			}
+			//assert(pos - FLANK >= 0 && pos - FLANK < (int)coverage.size());
+			++coverage.at(pos - FLANK);
 		}
 	}
 
@@ -155,8 +149,7 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 		maxCov = std::max(maxCov, cov);
 		sumCov += cov;
 	}
-	//int32_t meanCoverage = sumCov / coverage.size();
-	//int32_t medianCoverage = median(coverage);
+	int32_t medianCoverage = median(coverage);
 	if (sumCov == 0) return false;	//no overlaps found, but it's not chimeric either
 
 	int threshold = 0;	
@@ -167,33 +160,15 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 	}
 	else
 	{
-		/*threshold = std::round((float)std::min(_overlapCoverage, maxCov) /
-							   MAX_DROP_RATE);*/
-		threshold = 1;
+		threshold = std::max(1L, std::lround(medianCoverage / MAX_DROP_RATE));
 	}
 
 	int32_t goodStart = 0;
 	int32_t goodEnd = coverage.size() - 1;
-	if (!Parameters::get().unevenCoverage)
-	{
-		const int MAX_FLANK = (int)Config::get("maximum_overhang") / 
-								Config::get("chimera_window");
-		goodStart = MAX_FLANK;
-		goodEnd = coverage.size() - MAX_FLANK - 1;
-	}
-	else
-	{
-		for (goodEnd = 0; goodStart < (int)coverage.size(); ++goodStart)
-		{
-			if (coverage[goodStart] >= threshold) break;
-			if (goodStart > 0 && coverage[goodStart] < coverage[goodStart - 1]) break;
-		}
-		for (goodEnd = coverage.size() - 1; goodEnd >= 0; --goodEnd)
-		{
-			if (coverage[goodEnd] >= threshold) break;
-			if (goodEnd > 0 && coverage[goodEnd] > coverage[goodEnd - 1]) break;
-		}
-	}
+	const int MAX_FLANK = (int)Config::get("maximum_overhang") / 
+							Config::get("chimera_window");
+	goodStart = MAX_FLANK;
+	goodEnd = coverage.size() - MAX_FLANK - 1;
 	
 	bool lowCoverage = false;
 	if (goodEnd <= goodStart) lowCoverage = true;
@@ -224,4 +199,72 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 	logLock.unlock();*/
 
 	return lowCoverage;
+}
+
+bool ChimeraDetector::isRepetitiveRegion(FastaRecord::Id readId, int32_t start, 
+										 int32_t end)
+{
+	static const int WINDOW = Config::get("chimera_window");
+	static const int MAX_OVERHANG = Config::get("maximum_overhang");
+	const int FLANK = 1;
+
+	int numWindows = std::ceil((float)_seqContainer.seqLen(readId) / WINDOW) + 1;
+	int vecSize = numWindows - 2 * FLANK;
+	if (vecSize <= 0) return false;
+
+	std::vector<int> coverage(vecSize, 0);
+	std::vector<int> junctions(vecSize, 0);
+	for (const auto& ovlp : _ovlpContainer.lazySeqOverlaps(readId))
+	{
+		if (ovlp.curId == ovlp.extId.rc() ||
+			ovlp.curId == ovlp.extId) continue;
+
+		for (int pos = ovlp.curBegin / WINDOW + FLANK; 
+			 pos <= ovlp.curEnd / WINDOW - FLANK; ++pos)
+		{
+			if (ovlp.lrOverhang() > MAX_OVERHANG)
+			{
+				++junctions.at(pos - FLANK);
+			}
+			else
+			{
+				++coverage.at(pos - FLANK);
+			}
+		}
+	}
+
+	int numOverflows = 0;
+	int rangeLen = 0;
+	for (int32_t pos = std::max(0, start / WINDOW); 
+		 pos < std::min((int32_t)coverage.size(), end / WINDOW); ++pos)
+	{
+		if (coverage[pos] < junctions[pos]) ++numOverflows;
+		++rangeLen;
+	}
+	/*for (size_t i = 0; i < coverage.size(); ++i)
+	{
+		if (coverage[i] < junctions[i]) ++numOverflows;
+	}*/
+
+	//static std::mutex logLock;
+	//logLock.lock();
+	/*Logger::get().debug() << "Checking repeat";
+	std::string covStr;
+	std::string juncStr;
+	for (int32_t i = 0; i < (int)coverage.size() - 1; ++i)
+	{
+		covStr += std::to_string(coverage[i]) + " ";
+		juncStr += std::to_string(junctions[i]) + " ";
+	}
+	Logger::get().debug() << _seqContainer.seqName(readId) << " " << _seqContainer.seqLen(readId);
+	Logger::get().debug() << covStr;
+	Logger::get().debug() << juncStr;*/
+
+	if ((float)numOverflows / rangeLen > 0.75f)
+	{
+		//Logger::get().debug() << "Flagged";
+		return true;
+	}
+	return false;
+	//logLock.unlock();
 }
