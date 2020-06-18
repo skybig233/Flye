@@ -155,8 +155,8 @@ void OutputGenerator::outputGfaCompact(const std::vector<UnbranchingPath>& paths
 		if (!paths[i].id.strand()) continue;
 
 		//size_t kmerCount = sequences[i].sequence.length() * paths[i].meanCoverage;
-		fprintf(fout, "S\t%s\t%s\tr:i:%d\n", paths[i].name().c_str(), 
-				sequences[i].sequence.str().c_str(), (int)paths[i].repetitive);
+		fprintf(fout, "S\t%s\t%s\tdp:i:%d\n", paths[i].name().c_str(), 
+				sequences[i].sequence.str().c_str(), (int)paths[i].meanCoverage);
 	}
 
 	std::unordered_map<GraphNode*, int> signedNodeIds;
