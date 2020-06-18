@@ -54,14 +54,14 @@ bool OverlapDetector::overlapTest(const OverlapRange& ovlp,
 	}
 
 	//check "strand skipping" PacBio pattern
-	if (ovlp.curId == ovlp.extId.rc())
+	/*if (ovlp.curId == ovlp.extId.rc())
 	{
 		int32_t intersect = std::min(ovlp.curEnd, ovlp.extLen - ovlp.extBegin) - 
 			   				std::max(ovlp.curBegin, ovlp.extLen - ovlp.extEnd);
 
 		//if (intersect > -_maxJump) outSuggestChimeric = true;
 		if (intersect > ovlp.curRange() / 2) return false;
-	}
+	}*/
 
 	/*if (_checkOverhang)
 	{
