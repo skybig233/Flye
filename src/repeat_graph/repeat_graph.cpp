@@ -81,7 +81,7 @@ void RepeatGraph::build(OverlapDetector::MatchMode matchMode,
 	//asmIndex.countKmers(/*min freq*/ 1, /*genome size*/ 0);
 	//asmIndex.buildIndex(/*min freq*/ 1);
 
-	const int DEFAULT_OVERHANG = 50;
+	const int DEFAULT_OVERHANG = 100;
 	//float badEndAdj = (float)Config::get("repeat_graph_ovlp_end_adjust");
 	OverlapDetector asmOverlapper(_asmSeqs, asmIndex, 
 								  (int)Config::get("maximum_jump"), 
