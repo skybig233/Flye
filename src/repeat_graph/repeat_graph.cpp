@@ -992,6 +992,11 @@ void RepeatGraph::initializeEdges(const OverlapContainer& asmOverlaps)
 	}
 	Logger::get().debug() << "Filtered " << singletonsFiltered 
 		<< " singleton segments";
+
+	for (auto &edge: this->iterEdges())
+	{
+		edge->meanCoverage = edge->seqSegments.size();
+	}
 }
 
 

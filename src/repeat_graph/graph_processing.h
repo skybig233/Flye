@@ -80,7 +80,6 @@ public:
 		_graph(graph), _asmSeqs(asmSeqs) {}
 
 	void fixChimericJunctions();
-	void estimateCoverage();
 	//void trimTips();
 	std::vector<UnbranchingPath> getUnbranchingPaths() const;
 	std::vector<UnbranchingPath> getEdgesPaths() const;

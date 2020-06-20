@@ -26,18 +26,6 @@ void GraphProcessor::simplify()
 	//this->trimTips();
 }
 
-void GraphProcessor::estimateCoverage()
-{
-	for (auto &edge: _graph.iterEdges())
-	{
-		edge->meanCoverage = edge->seqSegments.size();
-		if (edge->meanCoverage > 1)
-		{
-			edge->repetitive = true;
-		}
-	}
-}
-
 //finds and removes graph structures that
 //originate from the typical chimeric read pattern 
 //(when a read contain two consecivtive reversed copies of the real sequence)

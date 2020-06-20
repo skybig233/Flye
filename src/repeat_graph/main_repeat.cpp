@@ -208,7 +208,6 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Max overlap divergence: " << maxOvlpDivergence;
 	rg.build(matchMode, maxOvlpDivergence);
 	rg.updateEdgeSequences();
-	proc.estimateCoverage();
 	//outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_raw.gv");
 	
 	//Logger::get().info() << "Remapping sequences on the graph";
