@@ -20,6 +20,7 @@
 #include "../repeat_graph/graph_processing.h"
 #include "../repeat_graph/repeat_resolver.h"
 #include "../repeat_graph/output_generator.h"
+#include "../contigger/contig_extender.h"
 
 #include <getopt.h>
 
@@ -174,7 +175,7 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Reading sequences";
 
 	SequenceContainer seqAssembly; 
-	SequenceContainer seqReads;
+	//SequenceContainer seqReads;
 	//std::vector<std::string> readsList = splitString(readsFasta, ',');
 	try
 	{
@@ -195,7 +196,7 @@ int repeat_main(int argc, char** argv)
 	SequenceContainer edgeSequences;
 	RepeatGraph rg(seqAssembly, &edgeSequences);
 	GraphProcessor proc(rg, seqAssembly);
-	ReadAligner aligner(rg, seqReads);
+	ReadAligner aligner(rg, seqAssembly);
 	OutputGenerator outGen(rg);
 
 	Logger::get().info() << "Building repeat graph";
@@ -207,12 +208,32 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Max overlap divergence: " << maxOvlpDivergence;
 	rg.build(matchMode, maxOvlpDivergence);
 	rg.updateEdgeSequences();
+	proc.estimateCoverage();
 	//outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_raw.gv");
+	
+	//Logger::get().info() << "Remapping sequences on the graph";
+	//aligner.alignReads();
+	//MultiplicityInferer multInf(rg, aligner, seqAssembly);
+	//multInf.estimateCoverage();
+	//multInf.splitNodes();
 
-	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/assembly_graph.gv");
-	outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/assembly_graph.gfa");
-	outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_edges.fasta");
+	//RepeatResolver repResolver(rg, seqAssembly, seqAssembly, aligner, multInf);
+	//repResolver.findRepeats();
 
+	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/repeat_graph.gv");
+	outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/repeat_graph.gfa");
+	//outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_edges.fasta");
+
+	SequenceContainer emptyContainer;
+	ContigExtender extender(rg, aligner, emptyContainer, emptyContainer);
+	extender.generateUnbranchingPaths();
+
+	outGen.outputDot(extender.getUnbranchingPaths(),
+					 outFolder + "/repeat_graph_compact.gv");
+	//outGen.outputFasta(extender.getUnbranchingPaths(),
+	//				   outFolder + "/graph_edge_compact.fasta");
+	outGen.outputGfa(extender.getUnbranchingPaths(),
+					 outFolder + "/repeat_graph_compact.gfa");
 
 	Logger::get().debug() << "Peak RAM usage: " 
 		<< getPeakRSS() / 1024 / 1024 / 1024 << " Gb";

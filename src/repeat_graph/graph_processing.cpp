@@ -23,7 +23,6 @@ void GraphProcessor::simplify()
 		changes += this->collapseBulges();
 		if (!changes) break;
 	}*/
-	this->estimateCoverage();
 	//this->trimTips();
 }
 
