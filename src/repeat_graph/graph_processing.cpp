@@ -189,12 +189,26 @@ int GraphProcessor::condenceEdges()
 	//helper function that checks if the simplification is
 	//possible and returns the new edges that should replace
 	//the original ones
-	auto collapseEdges = [] (const GraphPath& edges)
+	//
+	auto meanCoverage = [](const GraphPath& edges, size_t begin, size_t end)
 	{
+		size_t covSum = 0;
+		size_t covLen = 0;
+		for (size_t i = begin; i < end; ++i)
+		{
+			covSum += edges[i]->meanCoverage * edges[i]->length();
+			covLen += edges[i]->length();
+		}
+		return covSum / covLen;
+	};
+	
+	auto collapseEdges = [&meanCoverage] (const GraphPath& edges)
+	{
+		assert(edges.size() > 1);
+
 		std::vector<GraphEdge> newEdges;
 		std::list<EdgeSequence> growingSeqs(edges.front()->seqSegments.begin(),
 											edges.front()->seqSegments.end());
-		assert(edges.size() > 1);
 		size_t prevStart = 0;
 		for (size_t i = 1; i < edges.size(); ++i)
 		{
@@ -228,6 +242,7 @@ int GraphProcessor::condenceEdges()
 									  edges[i - 1]->nodeRight);
 				std::copy(prevSeqs.begin(), prevSeqs.end(),
 				  		  std::back_inserter(newEdges.back().seqSegments));
+				newEdges.back().meanCoverage = meanCoverage(edges, prevStart, i);
 
 				std::copy(edges[i]->seqSegments.begin(), 
 						  edges[i]->seqSegments.end(), 
@@ -240,6 +255,7 @@ int GraphProcessor::condenceEdges()
 							  edges.back()->nodeRight);
 		std::copy(growingSeqs.begin(), growingSeqs.end(),
 				  std::back_inserter(newEdges.back().seqSegments));
+		newEdges.back().meanCoverage = meanCoverage(edges, prevStart, edges.size());
 
 		return newEdges;
 	};
