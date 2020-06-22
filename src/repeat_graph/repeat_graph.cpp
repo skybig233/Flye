@@ -101,8 +101,8 @@ void RepeatGraph::build(OverlapDetector::MatchMode matchMode,
 	this->getGluepoints(asmOverlaps);
 	this->collapseTandems();
 	this->initializeEdges(asmOverlaps);
-	GraphProcessor proc(*this, _asmSeqs);
-	proc.simplify();
+	//this->unrollNodes();
+	GraphProcessor(*this, _asmSeqs).simplify();
 	this->logEdges();
 	//this->updateEdgeSequences();
 }
@@ -1360,4 +1360,103 @@ RepeatGraph::~RepeatGraph()
 
 	for (auto node : _graphNodes) delete node;
 	for (auto node : _deletedNodes) delete node;
+}
+
+void RepeatGraph::unrollNodes()
+{
+	typedef std::pair<EdgeSequence*, GraphEdge*> SegEdgePair;
+	std::unordered_map<FastaRecord::Id, 
+					   std::vector<SegEdgePair>> sequenceEdges;
+	for (auto& edge : this->iterEdges())
+	{
+		for (auto& segment : edge->seqSegments)
+		{
+			sequenceEdges[segment.origSeqId].push_back({&segment, edge});
+		}
+	}
+	for (auto& seqEdgesPair : sequenceEdges)
+	{
+		sortByKey(seqEdgesPair.second, [](const SegEdgePair& s){return s.first->origSeqStart;});
+	}
+
+	std::unordered_map<GraphEdge*, std::unordered_set<GraphEdge*>> rightConnections;
+	std::unordered_map<GraphEdge*, std::unordered_set<GraphEdge*>> leftConnections;
+
+	for (auto& seqEdges : sequenceEdges)
+	{
+		for (size_t i = 0; i < seqEdges.second.size() - 1; ++i)
+		{
+			rightConnections[seqEdges.second[i].second].insert(seqEdges.second[i + 1].second);
+			leftConnections[seqEdges.second[i + 1].second].insert(seqEdges.second[i].second);
+		}
+	}
+
+	/*for (auto itConn : rightConnections)
+	{
+		std::string connStr;
+		for (auto& e : itConn.second)
+		{
+			connStr +=std::to_string(e->edgeId.signedId()) + " ";
+		}
+		Logger::get().debug() << "Right: " << itConn.first->edgeId.signedId() << " -> " << connStr;
+	}
+
+	for (auto itConn : leftConnections)
+	{
+		std::string connStr;
+		for (auto& e : itConn.second)
+		{
+			connStr +=std::to_string(e->edgeId.signedId()) + " ";
+		}
+		Logger::get().debug() << "Left: " << itConn.first->edgeId.signedId() << " -> " << connStr;
+	}*/
+
+	std::unordered_map<GraphEdge*, GraphEdge*> toUnroll;
+	for (auto& edgeNeighbors : rightConnections)
+	{
+		if (edgeNeighbors.second.size() == 1 &&
+			edgeNeighbors.first->nodeRight->isBifurcation())
+		{
+			GraphEdge* nextEdge = *edgeNeighbors.second.begin();
+			if (edgeNeighbors.first->edgeId != nextEdge->edgeId &&
+				edgeNeighbors.first->edgeId != nextEdge->edgeId.rc() &&
+				!edgeNeighbors.first->selfComplement && !nextEdge->selfComplement &&
+				leftConnections[nextEdge].size() == 1)
+			{
+				if (!toUnroll.count(edgeNeighbors.first))
+				{
+					Logger::get().debug() << "To unroll: " 
+						<< edgeNeighbors.first->edgeId.signedId() << " " << nextEdge->edgeId.signedId();
+
+					toUnroll[edgeNeighbors.first] = nextEdge;
+					toUnroll[this->complementEdge(nextEdge)] = this->complementEdge(edgeNeighbors.first);
+				}
+			}
+		}
+	}
+
+	auto switchNode = [](GraphEdge* edge, GraphNode* newNode,
+						 bool isInput)
+	{
+		if (!isInput)
+		{
+			vecRemove(edge->nodeLeft->outEdges, edge);
+			edge->nodeLeft = newNode;
+			newNode->outEdges.push_back(edge);
+		}
+		else
+		{
+			vecRemove(edge->nodeRight->inEdges, edge);
+			edge->nodeRight = newNode;
+			newNode->inEdges.push_back(edge);
+		}
+
+	};
+
+	for (auto itPair : toUnroll)
+	{
+		GraphNode* newNode = this->addNode();
+		switchNode(itPair.first, newNode, true);
+		switchNode(itPair.second, newNode, false);
+	}
 }

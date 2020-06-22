@@ -432,6 +432,7 @@ private:
 	void collapseTandems();
 	void logEdges();
 	void checkGluepointProjections(const OverlapContainer& asmOverlaps);
+	void unrollNodes();
 	
 	const SequenceContainer& _asmSeqs;
 	SequenceContainer* 		 _edgeSeqsContainer;
