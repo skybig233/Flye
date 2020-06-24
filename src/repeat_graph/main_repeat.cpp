@@ -35,13 +35,14 @@ bool parseArgs(int argc, char** argv, std::string& readsFasta,
 	{
 		std::cerr << "Usage: flye-repeat "
 				  << " --input-seq path --out-dir path --config path\n"
-				  << "\t\t[--log path] [--treads num] [--kmer size] \n"
+				  << "\t\t[--reads pathi] [--log path] [--treads num] [--kmer size] \n"
 				  << "\t\t[--min-ovlp size] [--max-divergence X] [--debug] [-h]\n\n"
 				  << "Required arguments:\n"
 				  << "  --input-asm path\tpath to input sequences\n"
 				  << "  --out-dir path\tpath to output dir\n"
 				  << "  --config path\tpath to the config file\n\n"
 				  << "Optional arguments:\n"
+				  << "  --reads reads to simplify the graph \n"
 				  << "  --kmer size\tk-mer size [default = 15] \n"
 				  << "  --min-ovlp size\tminimum overlap between reads "
 				  << "[default = 5000] \n"
@@ -64,6 +65,7 @@ bool parseArgs(int argc, char** argv, std::string& readsFasta,
 	static option longOptions[] =
 	{
 		{"input-seq", required_argument, 0, 0},
+		{"reads", required_argument, 0, 0},
 		{"out-dir", required_argument, 0, 0},
 		{"config", required_argument, 0, 0},
 		{"log", required_argument, 0, 0},
@@ -175,28 +177,28 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Reading sequences";
 
 	SequenceContainer seqAssembly; 
-	//SequenceContainer seqReads;
-	//std::vector<std::string> readsList = splitString(readsFasta, ',');
+	SequenceContainer seqReads;
+	std::vector<std::string> readsList = splitString(readsFasta, ',');
 	try
 	{
 		seqAssembly.loadFromFile(inAssembly);
-		//for (auto& readsFile : readsList)
-		//{
-		//	seqReads.loadFromFile(readsFile);
-		//}
+		for (auto& readsFile : readsList)
+		{
+			seqReads.loadFromFile(readsFile);
+		}
 	}
 	catch (SequenceContainer::ParseException& e)
 	{
 		Logger::get().error() << e.what();
 		return 1;
 	}
-	//seqReads.buildPositionIndex();
 	seqAssembly.buildPositionIndex();
+	seqReads.buildPositionIndex();
 
 	SequenceContainer edgeSequences;
 	RepeatGraph rg(seqAssembly, &edgeSequences);
 	GraphProcessor proc(rg, seqAssembly);
-	ReadAligner aligner(rg, seqAssembly);
+	ReadAligner aligner(rg, seqReads);
 	OutputGenerator outGen(rg);
 
 	Logger::get().info() << "Building repeat graph";
@@ -210,14 +212,18 @@ int repeat_main(int argc, char** argv)
 	rg.updateEdgeSequences();
 	//outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_raw.gv");
 	
-	//Logger::get().info() << "Remapping sequences on the graph";
-	//aligner.alignReads();
-	//MultiplicityInferer multInf(rg, aligner, seqAssembly);
-	//multInf.estimateCoverage();
-	//multInf.splitNodes();
+	if (!readsList.empty())
+	{
+		Logger::get().info() << "Mapping reads on the graph";
+		aligner.alignReads();
+		MultiplicityInferer multInf(rg, aligner, seqAssembly);
+		multInf.estimateCoverage();
+		//multInf.splitNodes();
 
-	//RepeatResolver repResolver(rg, seqAssembly, seqAssembly, aligner, multInf);
-	//repResolver.findRepeats();
+		RepeatResolver repResolver(rg, seqAssembly, seqAssembly, aligner, multInf);
+		repResolver.resolveSimpleRepeats();
+		//repResolver.findRepeats();
+	}
 
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/repeat_graph.gv");
 	outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/repeat_graph.gfa");
