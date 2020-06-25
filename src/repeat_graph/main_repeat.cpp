@@ -220,7 +220,7 @@ int repeat_main(int argc, char** argv)
 		multInf.estimateCoverage();
 		//multInf.splitNodes();
 
-		RepeatResolver repResolver(rg, seqAssembly, seqAssembly, aligner, multInf);
+		RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
 		repResolver.resolveSimpleRepeats();
 		//repResolver.findRepeats();
 	}
