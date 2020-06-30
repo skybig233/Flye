@@ -139,7 +139,7 @@ int repeat_main(int argc, char** argv)
 	size_t numThreads = 1;
 	int kmerSize = 15;
 	int minOverlap = 1000;
-	bool isMeta = false;
+	bool isMeta = true;
 	bool keepHaplotypes = false; 
 	std::string readsFasta;
 	std::string inAssembly;
