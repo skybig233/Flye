@@ -24,8 +24,8 @@ def main():
                         dest="min_overlap")
     parser.add_argument("--max-divergence", type=float, default=0.05,
                         help="Maximum overlap divergence (default: 0.05)")
-    parser.add_argument("--match-mode", type=str, default="semi",
-                        help="Match mode: local, (semi), dovetail",
+    parser.add_argument("--match-mode", type=str, default="local",
+                        help="Match mode: (local), semi, dovetail",
                         dest="match_mode")
     args = parser.parse_args()
 
