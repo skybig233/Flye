@@ -102,7 +102,7 @@ void RepeatGraph::build(OverlapDetector::MatchMode matchMode,
 	this->collapseTandems();
 	this->initializeEdges(asmOverlaps);
 	this->unrollNodes();
-	GraphProcessor(*this, _asmSeqs).simplify();
+	//GraphProcessor(*this, _asmSeqs).simplify();
 	this->logEdges();
 	//this->updateEdgeSequences();
 }
