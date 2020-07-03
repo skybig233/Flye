@@ -33,10 +33,14 @@ std::vector<GraphAlignment>
 	std::deque<Chain> frozenChains;
 	for (auto& edgeAlignment : ovlps)
 	{
-		int32_t maxScore = 0;
+		int32_t maxScore = std::numeric_limits<int32_t>::min();
 		Chain* maxChain = nullptr;
 		int numOutdated = 0;
 
+		//int32_t nextScore = (1 - edgeAlignment.overlap.seqDivergence) * 
+		//					 edgeAlignment.overlap.curRange();
+		int32_t numMatches = (1 - edgeAlignment.overlap.seqDivergence) * 
+											edgeAlignment.overlap.curRange();
 		bool canExtend = edgeAlignment.overlap.extBegin < MAX_JUMP;
 		bool canBeExtended = edgeAlignment.overlap.extLen - 
 						   	 edgeAlignment.overlap.extEnd < MAX_JUMP;
@@ -56,9 +60,9 @@ std::vector<GraphAlignment>
 					MAX_JUMP > readDiff && readDiff > -MAX_READ_OVLP &&
 					graphLeftDiff + graphRightDiff < MAX_JUMP)
 				{
-					int32_t jumpDiv = abs(readDiff - (graphLeftDiff + graphRightDiff));
-					int32_t gapCost = (jumpDiv > 100) ? jumpDiv / 50 : 0;
-					int32_t score = chain.score + nextOvlp.score - gapCost;
+					//int32_t jumpDiv = abs(readDiff - (graphLeftDiff + graphRightDiff));
+					//int32_t gapCost = (jumpDiv > 100) ? jumpDiv / 50 : 0;
+					int32_t score = chain.score + numMatches - readDiff;
 					if (score > maxScore)
 					{
 						maxScore = score;
@@ -82,13 +86,11 @@ std::vector<GraphAlignment>
 		{
 			if (canBeExtended)
 			{
-				activeChains.push_back({{&edgeAlignment}, 
-										 edgeAlignment.overlap.score});
+				activeChains.push_back({{&edgeAlignment}, numMatches});
 			}
 			else
 			{
-				frozenChains.push_back({{&edgeAlignment}, 
-										 edgeAlignment.overlap.score});
+				frozenChains.push_back({{&edgeAlignment}, numMatches});
 			}
 		}
 
@@ -155,11 +157,14 @@ std::vector<GraphAlignment>
 
 void ReadAligner::alignReads()
 {
-	static const int SMALL_ALN = 100;
-	static const int BIG_ALN = 500;
-	static const int LONG_EDGE = 900;
+	static const int MIN_ALN_LEN = 100;
+	static const int SAFE_ALN_LEN = 500;
+	static const int LONG_EDGE = 1000;
 
 	static const float MAX_DIVERGENCE = Config::get("read_align_ovlp_divergence");
+	static const int MAX_JUMP = Config::get("maximum_jump");
+	static const bool BASE_ALN = (bool)Config::get("reads_base_alignment");
+	static const bool USE_HPC = (bool)Config::get("hpc_scoring_on");
 
 	//create database
 	std::unordered_map<FastaRecord::Id, 
@@ -184,7 +189,7 @@ void ReadAligner::alignReads()
 	//pathsIndex.countKmers(/*min freq*/ 1, /* genome size*/ 0);
 	//pathsIndex.buildIndex(/*min freq*/ 1);
 	OverlapDetector readsOverlapper(_graph.edgeSequences(), pathsIndex, 
-									(int)Config::get("maximum_jump"), SMALL_ALN,
+									(int)Config::get("maximum_jump"), MIN_ALN_LEN,
 									/*no overhang*/ 0, /*keep alignment*/ false, 
 									/*only max*/ false, /*no max divergence*/ 1.0f,
 									/*nucl alignment*/ false,
@@ -221,15 +226,27 @@ void ReadAligner::alignReads()
 			//because edges might be as short as max_separation,
 			//we set minimum alignment threshold to a bit shorter value.
 			//However, apply the actual threshold for longer edges now.
-			if (ovlp.extLen < LONG_EDGE ||
-				std::min(ovlp.curRange(), ovlp.extRange()) > BIG_ALN)
+			int32_t overhang = std::min(ovlp.extBegin, ovlp.extLen - ovlp.extEnd);
+			if ((ovlp.extLen < LONG_EDGE || std::min(ovlp.curRange(), 
+													 ovlp.extRange()) > SAFE_ALN_LEN) &&
+				(overhang < MAX_JUMP || std::min(ovlp.extRange(), 
+												 ovlp.curRange()) > Parameters::get().minimumOverlap))
 			{
-				//alignments.push_back({ovlp, idToSegment[ovlp.extId].first,
-				//					  idToSegment[ovlp.extId].second});
+
+				if (BASE_ALN)
+				{
+					ovlp.seqDivergence = 
+						getAlignmentErrEdlib(ovlp, _readSeqs.getSeq(ovlp.curId), 
+											 _graph.edgeSequences().getSeq(ovlp.extId),
+											 MAX_DIVERGENCE, USE_HPC);
+				}
+
+
 				alignments.push_back({ovlp, idToSegment[ovlp.extId].first});
 			}
 
 		}
+
 		std::sort(alignments.begin(), alignments.end(),
 		  [](const EdgeAlignment& e1, const EdgeAlignment& e2)
 			{return e1.overlap.curBegin < e2.overlap.curBegin;});
@@ -239,8 +256,7 @@ void ReadAligner::alignReads()
 		std::vector<GraphAlignment> goodChains;
 		for (auto& chain : readChains)
 		{
-			float chainDivergence = 
-				this->getChainBaseDivergence(chain, (bool)Config::get("reads_base_alignment"));
+			float chainDivergence = this->getChainBaseDivergence(chain, BASE_ALN);
 			divergenceStats.add(chainDivergence);
 			if (chainDivergence < MAX_DIVERGENCE)
 			{
@@ -409,21 +425,21 @@ ReadAligner::AlnIndex ReadAligner::makeAlignmentIndex()
 
 float ReadAligner::getChainBaseDivergence(const GraphAlignment& chain, bool realign)
 {
-	static const float MAX_DIVERGENCE = Config::get("read_align_ovlp_divergence");
-	static const bool USE_HPC = (bool)Config::get("hpc_scoring_on");
+	//static const float MAX_DIVERGENCE = Config::get("read_align_ovlp_divergence");
+	//static const bool USE_HPC = (bool)Config::get("hpc_scoring_on");
 
 	float sumMatched = 0;
 	int alnLen = 0;
 	for (auto& aln : chain)
 	{
 		float ovlpDivergence = aln.overlap.seqDivergence;
-		if (realign)
+		/*if (realign)
 		{
 			ovlpDivergence = 
 				getAlignmentErrEdlib(aln.overlap, _readSeqs.getSeq(aln.overlap.curId), 
 									 _graph.edgeSequences().getSeq(aln.overlap.extId),
 									 MAX_DIVERGENCE, USE_HPC);
-		}
+		}*/
 
 		sumMatched += aln.overlap.curRange() * (1 - ovlpDivergence);
 		alnLen += aln.overlap.curRange();
