@@ -210,12 +210,16 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Max overlap divergence: " << maxOvlpDivergence;
 	rg.build(matchMode, maxOvlpDivergence);
 	rg.updateEdgeSequences();
+	//SequenceContainer::writeFasta(edgeSequences.iterSeqs(), 
+	//							  outFolder + "/repeat_graph_edges.fasta",
+	//							  /*only pos strand*/ true);
 	//outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_raw.gv");
 	
 	if (!readsList.empty())
 	{
 		Logger::get().info() << "Mapping reads on the graph";
 		aligner.alignReads();
+		//aligner.storeAlignments(outFolder + "/read_alignment_dump");
 		MultiplicityInferer multInf(rg, aligner, seqAssembly);
 		multInf.estimateCoverage();
 		//multInf.splitNodes();
@@ -223,6 +227,7 @@ int repeat_main(int argc, char** argv)
 		RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
 		repResolver.resolveSimpleRepeats();
 		//repResolver.findRepeats();
+		//repResolver.resolveRepeats();
 	}
 
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/repeat_graph.gv");
