@@ -15,27 +15,27 @@
 
 
 
-bool ChimeraDetector::isChimeric(FastaRecord::Id readId)
+/*bool ChimeraDetector::isChimeric(FastaRecord::Id readId)
 {
 	if (!_chimeras.contains(readId))
 	{
 		const auto& ovlps = _ovlpContainer.lazySeqOverlaps(readId);
-		bool result = this->testReadByCoverage(readId, ovlps) ||
-					  _ovlpContainer.hasSelfOverlaps(readId);
+		bool result = this->testReadByCoverage(readId, ovlps);
+					  //_ovlpContainer.hasSelfOverlaps(readId);
 		_chimeras.insert(readId, result);
 		_chimeras.insert(readId.rc(), result);
 	}
 	return _chimeras.find(readId);
-}
+}*/
 
 bool ChimeraDetector::isChimeric(FastaRecord::Id readId,
 								 const std::vector<OverlapRange>& readOvlps)
 {
-	const int JUMP = Config::get("maximum_jump");
+	//const int JUMP = Config::get("maximum_jump");
 	if (!_chimeras.contains(readId))
 	{
 		bool result = this->testReadByCoverage(readId, readOvlps);
-		for (const auto& ovlp : IterNoOverhang(readOvlps))
+		/*for (const auto& ovlp : IterNoOverhang(readOvlps))
 		{
 			if (ovlp.curId == ovlp.extId.rc()) 
 			{
@@ -45,7 +45,7 @@ bool ChimeraDetector::isChimeric(FastaRecord::Id readId,
 					result = true;
 				}
 			}
-		}
+		}*/
 		_chimeras.insert(readId, result);
 		_chimeras.insert(readId.rc(), result);
 	}
@@ -202,19 +202,107 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 }
 
 bool ChimeraDetector::isRepetitiveRegion(FastaRecord::Id readId, int32_t start, 
-										 int32_t end)
+										 int32_t end, bool debug)
 {
-	static const int WINDOW = Config::get("chimera_window");
-	static const int MAX_OVERHANG = Config::get("maximum_overhang");
-	const int FLANK = 1;
-
-	int numWindows = std::ceil((float)_seqContainer.seqLen(readId) / WINDOW) + 1;
+	const float HANG_END_RATE = 0.75f;
+	const float REPEAT_WINDOW_RATE = 0.75f;
+	const int WINDOW = Config::get("chimera_window");
+	
+	/*int numWindows = std::ceil((float)_seqContainer.seqLen(readId) / WINDOW) + 1;
 	int vecSize = numWindows - 2 * FLANK;
 	if (vecSize <= 0) return false;
 
 	std::vector<int> coverage(vecSize, 0);
 	std::vector<int> junctions(vecSize, 0);
-	for (const auto& ovlp : _ovlpContainer.lazySeqOverlaps(readId))
+	for (const auto& ovlp : this->getLocalOverlaps(readId))
+	//for (const auto& ovlp : _containNoOverhangs.lazySeqOverlaps(readId))
+	{
+		if (ovlp.curId == ovlp.extId.rc() ||
+			ovlp.curId == ovlp.extId) continue;
+
+		for (int pos = ovlp.curBegin / WINDOW + FLANK; 
+			 pos <= ovlp.curEnd / WINDOW - FLANK; ++pos)
+		{
+			if (ovlp.lrOverhang() > MAX_OVERHANG)
+			{
+				++junctions.at(pos - FLANK);
+			}
+			else
+			{
+				++coverage.at(pos - FLANK);
+			}
+		}
+	}*/
+
+	auto cachedCoverage = this->getCachedCoverage(readId);
+	const std::vector<int32_t>& coverage = *cachedCoverage.coverageFullAln;
+	const std::vector<int32_t>& junctions = *cachedCoverage.coverageIncomleteAln;
+
+	int numSuspicious = 0;
+	int rangeLen = 0;
+	for (int32_t pos = std::max(0, start / WINDOW); 
+		 pos < std::min((int32_t)coverage.size(), end / WINDOW); ++pos)
+	{
+		if (HANG_END_RATE * coverage[pos] <= junctions[pos])	//if both are 0, it's suspicious
+		{
+			++numSuspicious;
+		}
+		++rangeLen;
+	}
+
+	if (debug)
+	{
+		//static std::mutex logLock;
+		//logLock.lock();
+		Logger::get().debug() << "Checking repeat";
+		std::string covStr;
+		std::string juncStr;
+		for (int32_t i = 0; i < (int)coverage.size() - 1; ++i)
+		{
+			covStr += std::to_string(coverage[i]) + " ";
+			juncStr += std::to_string(junctions[i]) + " ";
+		}
+		//Logger::get().debug() << _seqContainer.seqName(readId);
+		Logger::get().debug() << _seqContainer.seqLen(readId) << " " << start << " " << end;
+		Logger::get().debug() << covStr;
+		Logger::get().debug() << juncStr;
+		
+		if ((float)numSuspicious / rangeLen > REPEAT_WINDOW_RATE) Logger::get().debug() << "Flagged";
+	}
+
+	if ((float)numSuspicious / rangeLen > REPEAT_WINDOW_RATE)
+	{
+		return true;
+	}
+	return false;
+}
+
+ChimeraDetector::CachedCoverage
+	ChimeraDetector::getCachedCoverage(FastaRecord::Id readId)
+{
+	//upsert creates default value if it does not exist
+	CachedCoverage cached;
+	_localOvlpsStorage.upsert(readId, 	
+		[&cached](CachedCoverage& val)
+			{cached = val;}, CachedCoverage());
+	if (cached.cached)
+	{
+		return cached;
+	}
+
+	//not cached - need to copmute
+	const int WINDOW = Config::get("chimera_window");
+	const int MAX_OVERHANG = Config::get("maximum_overhang");
+	const int FLANK = 1;
+
+	int numWindows = std::ceil((float)_seqContainer.seqLen(readId) / WINDOW) + 1;
+	int vecSize = numWindows - 2 * FLANK;
+	if (vecSize <= 0) throw std::runtime_error("Zero-sized coverage vector");
+
+	std::vector<int> coverage(vecSize, 0);
+	std::vector<int> junctions(vecSize, 0);
+	auto overlaps = _ovlpContainer.quickSeqOverlaps(readId, /*max ovlps*/ 0, /*force local*/ true);
+	for (const auto& ovlp : overlaps)
 	{
 		if (ovlp.curId == ovlp.extId.rc() ||
 			ovlp.curId == ovlp.extId) continue;
@@ -232,39 +320,24 @@ bool ChimeraDetector::isRepetitiveRegion(FastaRecord::Id readId, int32_t start,
 			}
 		}
 	}
+	//
 
-	int numOverflows = 0;
-	int rangeLen = 0;
-	for (int32_t pos = std::max(0, start / WINDOW); 
-		 pos < std::min((int32_t)coverage.size(), end / WINDOW); ++pos)
-	{
-		if (coverage[pos] < junctions[pos]) ++numOverflows;
-		++rangeLen;
-	}
-	/*for (size_t i = 0; i < coverage.size(); ++i)
-	{
-		if (coverage[i] < junctions[i]) ++numOverflows;
-	}*/
+	//updating cache
+	_localOvlpsStorage.update_fn(readId,
+		[&cached, &coverage, &junctions, this]
+		(CachedCoverage& val)
+		{
+			if (!val.cached)
+			{
+				val.coverageFullAln = new std::vector<int32_t>;
+				val.coverageFullAln->swap(coverage);
+				val.coverageIncomleteAln = new std::vector<int32_t>;
+				val.coverageIncomleteAln->swap(junctions);
+				val.cached = true;
+			}
+			cached = val;
+		});
 
-	//static std::mutex logLock;
-	//logLock.lock();
-	/*Logger::get().debug() << "Checking repeat";
-	std::string covStr;
-	std::string juncStr;
-	for (int32_t i = 0; i < (int)coverage.size() - 1; ++i)
-	{
-		covStr += std::to_string(coverage[i]) + " ";
-		juncStr += std::to_string(junctions[i]) + " ";
-	}
-	Logger::get().debug() << _seqContainer.seqName(readId) << " " << _seqContainer.seqLen(readId);
-	Logger::get().debug() << covStr;
-	Logger::get().debug() << juncStr;*/
+	return cached;
 
-	if ((float)numOverflows / rangeLen > 0.75f)
-	{
-		//Logger::get().debug() << "Flagged";
-		return true;
-	}
-	return false;
-	//logLock.unlock();
 }
