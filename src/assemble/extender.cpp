@@ -97,6 +97,8 @@ Extender::ExtensionInfo Extender::extendDisjointig(FastaRecord::Id startRead)
 
 			const std::vector<OverlapRange>& extOverlaps = _ovlpContainer.lazySeqOverlaps(ovlp.extId);
 
+			if (_chimDetector.isChimeric(ovlp.extId, extOverlaps)) continue;
+
 			//pick the first available highly reliable extenion (which will
 			//also be the longest as extensions are sorted)
 			if (!_chimDetector.isChimeric(ovlp.extId, extOverlaps) &&
@@ -258,8 +260,8 @@ void Extender::assembleDisjointigs()
 
 		if (_chimDetector.isChimeric(startRead, startOvlps) ||
 			_readsContainer.seqLen(startRead) < _safeOverlap ||
-			std::max(extLeft, extRight) > maxStartExt ||
-			std::min(extLeft, extRight) < minStartExt ||
+			//std::max(extLeft, extRight) > maxStartExt ||
+			//std::min(extLeft, extRight) < minStartExt ||
 			numInnerOvlp > totalOverlaps / 2) return;
 		
 		//Good to go!
@@ -268,13 +270,13 @@ void Extender::assembleDisjointigs()
 		//Exclusive part - updating the overall assembly
 		std::lock_guard<std::mutex> guard(indexMutex);
 
-		if (exInfo.reads.size() - exInfo.numSuspicious < 
+		/*if (exInfo.reads.size() - exInfo.numSuspicious < 
 			(size_t)Config::get("min_reads_in_disjointig"))
 		{
 			//Logger::get().debug() << "Thrown away: " << exInfo.reads.size() << " " << exInfo.numSuspicious
 			//	<< " " << exInfo.leftTip << " " << exInfo.rightTip;
 			return;
-		}
+		}*/
 
 		/*if (exInfo.leftAsmOverlap + exInfo.rightAsmOverlap > 
 			exInfo.assembledLength + 2 * Parameters::get().minimumOverlap)
