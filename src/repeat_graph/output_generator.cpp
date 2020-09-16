@@ -243,28 +243,45 @@ void OutputGenerator::outputDot(const std::vector<UnbranchingPath>& paths,
 								  "cadetblue1", "darkorchid", "aquamarine1", 
 								  "darkgoldenrod1", "deepskyblue1", 
 								  "darkolivegreen3"};
-	std::vector<GraphEdge*> dfsStack;
-	std::unordered_set<GraphEdge*> visited;
+	std::vector<GraphNode*> dfsStack;
+	std::unordered_set<GraphNode*> visited;
 	std::unordered_map<GraphEdge*, std::string> edgeColors;
 	size_t colorId = 0;
-	for (auto& edge: _graph.iterEdges())
+	for (auto& node : _graph.iterNodes())
 	{
-		if (!edge->isRepetitive() || visited.count(edge)) continue;
-		dfsStack.push_back(edge);
+		if (visited.count(node)) continue;
+		dfsStack.push_back(node);
 		while(!dfsStack.empty())
 		{
-			auto curEdge = dfsStack.back(); 
+			auto curNode = dfsStack.back(); 
 			dfsStack.pop_back();
-			if (visited.count(curEdge)) continue;
-			edgeColors[curEdge] = COLORS[colorId];
-			edgeColors[_graph.complementEdge(curEdge)] = COLORS[colorId];
-			visited.insert(curEdge);
-			visited.insert(_graph.complementEdge(curEdge));
-			for (auto adjEdge: curEdge->adjacentEdges())
+			if (visited.count(curNode)) continue;
+
+			visited.insert(curNode);
+			visited.insert(_graph.complementNode(curNode));
+			
+			for (auto adjEdge: curNode->outEdges)
 			{
-				if (adjEdge->isRepetitive() && !visited.count(adjEdge))
+				if (adjEdge->isRepetitive())
 				{
-					dfsStack.push_back(adjEdge);
+					edgeColors[adjEdge] = COLORS[colorId];
+					edgeColors[_graph.complementEdge(adjEdge)] = COLORS[colorId];
+					if (!visited.count(adjEdge->nodeRight))
+					{
+						dfsStack.push_back(adjEdge->nodeRight);
+					}
+				}
+			}
+			for (auto adjEdge: curNode->inEdges)
+			{
+				if (adjEdge->isRepetitive())
+				{
+					edgeColors[adjEdge] = COLORS[colorId];
+					edgeColors[_graph.complementEdge(adjEdge)] = COLORS[colorId];
+					if (!visited.count(adjEdge->nodeLeft))
+					{
+						dfsStack.push_back(adjEdge->nodeLeft);
+					}
 				}
 			}
 		}
