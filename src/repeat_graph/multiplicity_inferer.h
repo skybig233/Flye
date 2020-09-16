@@ -33,9 +33,11 @@ public:
 
 	int trimTips()
 	{
+		const int MAX_ITER = 5;
 		int totalShort = 0;
 		int totalLong = 0;
-		for (;;)
+		int numIter = 0;
+		for (;numIter < MAX_ITER; ++numIter)
 		{
 			int iterShort = 0;
 			int iterLong = 0;
@@ -45,8 +47,10 @@ public:
 			if (iterShort + iterLong == 0) break;
 		}
 
+		_aligner.updateAlignments();
 		Logger::get().debug() << "[SIMPL] Clipped " << totalShort 
 			<< " short and " << totalLong << " long tips";
+		//Logger::get().debug() << "Iterations: " << numIter;
 		return totalShort + totalLong;
 	}
 
