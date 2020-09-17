@@ -268,12 +268,14 @@ void ReadAligner::alignReads()
 		if (goodChains.size() == 1) ++alignedInFull;
 		for (auto& chain : goodChains) 
 		{
+			chain.shrink_to_fit();
 			_readAlignments.push_back(chain);
 			alignedLength += chain.back().overlap.curEnd - 
 							 chain.front().overlap.curBegin;
 		}
 		for (auto& chain : complChains)
 		{
+			chain.shrink_to_fit();
 			_readAlignments.push_back(chain);
 		}
 		indexMutex.unlock();
@@ -294,8 +296,20 @@ void ReadAligner::alignReads()
 //updates alignments with respect to the new graph
 void ReadAligner::updateAlignments()
 {
-	std::vector<GraphAlignment> newAlignments;
-	for (auto& aln : _readAlignments)
+	auto isValidAlignment = [this](const GraphAlignment& aln)
+	{
+		for (size_t i = 0; i < aln.size() - 1; ++i)
+		{
+			if (!_graph.getEdge(aln[i].edge->edgeId) ||
+				!_graph.getEdge(aln[i + 1].edge->edgeId)) return false;
+
+			if (aln[i].edge->nodeRight != aln[i + 1].edge->nodeLeft) return false;
+		}
+		return true;
+	};
+
+	std::vector<GraphAlignment> newlyAdded;
+	auto splitAlignment = [&newlyAdded, this](const GraphAlignment& aln)
 	{
 		GraphAlignment curAlignment;
 		for (size_t i = 0; i < aln.size() - 1; ++i)
@@ -306,16 +320,37 @@ void ReadAligner::updateAlignments()
 			if (!_graph.getEdge(aln[i + 1].edge->edgeId) ||
 				aln[i].edge->nodeRight != aln[i + 1].edge->nodeLeft)
 			{
-				newAlignments.push_back(curAlignment);
+				newlyAdded.push_back(curAlignment);
 				curAlignment.clear();
 			}
 		}
 
 		if (_graph.getEdge(aln.back().edge->edgeId)) curAlignment.push_back(aln.back());
-		if (!curAlignment.empty()) newAlignments.push_back(curAlignment);
-	}
+		if (!curAlignment.empty()) newlyAdded.push_back(curAlignment);
+	};
 
-	_readAlignments = newAlignments;
+	size_t insertIdx = 0;
+	for (size_t i = 0; i < _readAlignments.size(); ++i)
+	{
+		if (isValidAlignment(_readAlignments[i]))
+		{
+			if (i != insertIdx)
+			{
+				_readAlignments[insertIdx] = std::move(_readAlignments[i]);
+			}
+			++insertIdx;
+		}
+		else
+		{
+			splitAlignment(_readAlignments[i]);
+		}
+	}
+	_readAlignments.erase(_readAlignments.begin() + insertIdx, _readAlignments.end());
+	_readAlignments.reserve(_readAlignments.size() + newlyAdded.size());
+	for (auto& aln : newlyAdded)
+	{
+		_readAlignments.push_back(std::move(aln));
+	}
 }
 
 void ReadAligner::storeAlignments(const std::string& filename)
@@ -358,6 +393,7 @@ void ReadAligner::loadAlignments(const std::string& filename)
 		{
 			if (!curAlignment.empty())
 			{
+				curAlignment.shrink_to_fit();
 				_readAlignments.push_back(curAlignment);
 				curAlignment.clear();
 			}
@@ -381,6 +417,7 @@ void ReadAligner::loadAlignments(const std::string& filename)
 	}
 	if (!curAlignment.empty())
 	{
+		curAlignment.shrink_to_fit();
 		_readAlignments.push_back(curAlignment);
 		curAlignment.clear();
 	}
@@ -390,8 +427,7 @@ void ReadAligner::loadAlignments(const std::string& filename)
 
 ReadAligner::AlnIndex ReadAligner::makeAlignmentIndex()
 {
-	std::unordered_map<GraphEdge*, 
-					   std::vector<GraphAlignment>> alnIndex;
+	AlnIndex alnIndex;
 	for (auto& aln : this->getAlignments())
 	{
 		if (aln.size() > 1)
