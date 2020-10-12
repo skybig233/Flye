@@ -164,6 +164,7 @@ def _flatten_profile(profile):
             ins_group[ins_str] += 1
 
         match_and_del_num = sum(itervalues(pos_matches))
+        del_num = pos_matches["-"]
         num_ins = len(pos_insertions)
 
         max_match = pos_nucl
@@ -173,9 +174,12 @@ def _flatten_profile(profile):
         if ins_group:
             max_insert = max(sorted(ins_group), key=ins_group.get)
 
-        if max_match != "-":
+        is_deletion = max_match == "-" or del_num > match_and_del_num // 3
+        is_insertion = max_insert and max_insert != "-" and num_ins > match_and_del_num // 3
+
+        if not is_deletion:
             growing_seq.append(max_match)
-        if max_insert and max_insert != "-" and num_ins > match_and_del_num // 2:
+        if is_insertion:
             growing_seq.append(max_insert)
 
     return "".join(growing_seq)
