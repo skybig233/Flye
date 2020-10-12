@@ -408,6 +408,38 @@ std::vector<OverlapRange>
 		if (!intersects) nonIntersecting.push_back(interval);
 	}
 
+	//to preven bad alignment ends, select the best local alignment
+	//within the interval
+	for (auto& interval : nonIntersecting)
+	{
+		int maxScore = 0;
+		int maxPos = interval.end;
+		int minPos = interval.start;
+		int curScore = 0;
+		for (int i = interval.start; i <= interval.end; ++i)
+		{
+			int score = 0;
+			if (cigar[i].op == '=') score = cigar[i].len * 2;
+			else if(cigar[i].op == 'X') score = cigar[i].len * (-4);
+			else score = -4 + (cigar[i].len - 1) * (-2);
+
+			curScore += score;
+			if (curScore >= maxScore)
+			{
+				maxScore = curScore;
+				maxPos = i;
+			}
+			if (curScore <= 0)
+			{
+				curScore = 0;
+				minPos = i;
+			}
+		}
+
+		interval.start = minPos;
+		interval.end = maxPos;
+	}
+
 	//now, for each interesting interval check its length and create new overlaps
 	//also need to transofrm back from HPC to original coordinates
 	std::vector<OverlapRange> trimmedAlignments;
