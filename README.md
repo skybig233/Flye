@@ -167,18 +167,21 @@ Main code contributors:
 
 Publications
 ------------
+
+Mikhail Kolmogorov, Derek M. Bickhart, Bahar Behsaz, Alexey Gurevich, Mikhail Rayko, Sung Bong
+Shin, Kristen Kuhn, Jeffrey Yuan, Evgeny Polevikov, Timothy P. L. Smith and Pavel A. Pevzner
+"metaFlye: scalable long-read metagenome assembly using repeat graphs", Nature Methods, 2020
+[doi:s41592-020-00971-x](https://doi.org/10.1038/s41592-020-00971-x)
+
 Mikhail Kolmogorov, Jeffrey Yuan, Yu Lin and Pavel Pevzner, 
 "Assembly of Long Error-Prone Reads Using Repeat Graphs", Nature Biotechnology, 2019
 [doi:10.1038/s41587-019-0072-8](https://doi.org/10.1038/s41587-019-0072-8)
-
-Mikhail Kolmogorov, Mikhail Rayko, Jeffrey Yuan, Evgeny Polevikov, Pavel Pevzner,
-"metaFlye: scalable long-read metagenome assembly using repeat graphs", bioRxiv, 2019
-[doi:10.1101/637637](https://doi.org/10.1101/637637)
 
 Yu Lin, Jeffrey Yuan, Mikhail Kolmogorov, Max W Shen, Mark Chaisson and Pavel Pevzner, 
 "Assembly of Long Error-Prone Reads Using de Bruijn Graphs", PNAS, 2016
 [doi:10.1073/pnas.1604560113](https://www.doi.org/10.1073/pnas.1604560113)
 
+**How to cite**: the 2020 paper is the most relevant to metagenome assembly. For single genome assembly, use the 2019 paper as reference. The 2016 paper describes solid k-mer indexing and polishing approaches that are used as core algorithms in the current pipeline.
 
 How to get help
 ---------------
