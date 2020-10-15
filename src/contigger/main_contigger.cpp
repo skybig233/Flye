@@ -205,7 +205,7 @@ int contigger_main(int argc, char** argv)
 	//rg.validateGraph();
 	ReadAligner aln(rg, seqReads);
 	aln.loadAlignments(inReadsAlignment);
-	OutputGenerator outGen(rg);
+	OutputGenerator outGen(rg, aln);
 
 	//Logger::get().info() << "Generating contigs";
 

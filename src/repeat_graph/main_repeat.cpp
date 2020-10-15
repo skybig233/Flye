@@ -225,7 +225,7 @@ int repeat_main(int argc, char** argv)
 	RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
 	HaplotypeResolver hapResolver(rg, aligner, seqAssembly, seqReads);
 	GraphProcessor proc(rg, seqAssembly);
-	OutputGenerator outGen(rg);
+	OutputGenerator outGen(rg, aligner);
 
 	//dump graph before first repeat resolution iteration
 	repResolver.findRepeats();
