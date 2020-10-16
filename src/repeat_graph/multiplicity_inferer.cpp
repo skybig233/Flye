@@ -534,7 +534,9 @@ void MultiplicityInferer::trimTipsIteration(int& outShort, int& outLong)
 	std::unordered_map<GraphEdge*, UnbranchingPath*> ubIndex;
 	for (auto& path : unbranchingPaths)
 	{
-		for (auto& edge: path.path) ubIndex[edge] = &path;
+		ubIndex[path.path.front()] = &path;
+		ubIndex[path.path.back()] = &path;
+		//for (auto& edge: path.path) ubIndex[edge] = &path;
 	}
 
 	int shortClipped = 0;
@@ -620,7 +622,6 @@ void MultiplicityInferer::trimTipsIteration(int& outShort, int& outLong)
 			complEdge->nodeRight->inEdges.push_back(complEdge);
 		}
 	}
-	_aligner.updateAlignments();
 	outShort = shortClipped;
 	outLong = longClipped;
 }

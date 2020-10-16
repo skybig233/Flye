@@ -16,8 +16,8 @@
 class OutputGenerator
 {
 public:
-	OutputGenerator(RepeatGraph& graph):
-		_graph(graph) {}
+	OutputGenerator(RepeatGraph& graph, const ReadAligner& aln):
+		_graph(graph), _aligner(aln) {}
 
 	void outputDot(const std::vector<UnbranchingPath>& paths, 
 				   const std::string& filename);
@@ -32,7 +32,7 @@ public:
 private:
 
 	RepeatGraph& _graph;
-	//const ReadAligner& _aligner;
+	const ReadAligner& _aligner;
 	//const SequenceContainer& _asmSeqs;
 	//const SequenceContainer& _readSeqs;
 };

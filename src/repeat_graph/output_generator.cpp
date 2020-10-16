@@ -83,13 +83,13 @@ void OutputGenerator::outputGfa(const std::vector<UnbranchingPath>& paths,
 							    const std::string& filename)
 {
 	auto sequences = this->generatePathSequences(paths);
-	std::unordered_map<GraphNode*, std::vector<const UnbranchingPath*>> leftNodes;
-	std::unordered_map<GraphNode*, std::vector<const UnbranchingPath*>> rightNodes;
+	std::unordered_map<GraphEdge*, const UnbranchingPath*> edgeToPath;
 	for (auto& path : paths)
 	{
-		leftNodes[path.path.front()->nodeLeft].push_back(&path);
-		rightNodes[path.path.back()->nodeRight].push_back(&path);
+		edgeToPath[path.path.front()] = &path;
 	}
+
+	auto edgeConnections = _aligner.getEdgeConnectivity();
 
 	Logger::get().debug() << "Writing Gfa";
 	FILE* fout = fopen(filename.c_str(), "w");
@@ -105,30 +105,38 @@ void OutputGenerator::outputGfa(const std::vector<UnbranchingPath>& paths,
 				sequences[i].sequence.str().c_str(), (int)paths[i].meanCoverage);
 	}
 
-	std::unordered_set<std::pair<GraphEdge*, GraphEdge*>, pairhash> usedPairs;
-	for (auto& nodeIt : leftNodes)
+	//make sure that if there are nodes with one incoming and one outgoing
+	//edge, they are connected. Most relevant to the circular contigs
+	for (auto& node : _graph.iterNodes())
 	{
-		for (auto& contigRight : nodeIt.second)
+		if (node->inEdges.size() == 1 && node->outEdges.size() == 1)
 		{
-			for (auto& contigLeft : rightNodes[nodeIt.first])
-			{
-				GraphEdge* edgeLeft = contigLeft->path.back();
-				GraphEdge* edgeRight = contigRight->path.front();
+			edgeConnections[node->inEdges.front()].insert(node->outEdges.front());
+		}
+	}
 
-				if (usedPairs.count(std::make_pair(edgeLeft, edgeRight))) continue;
-				usedPairs.insert(std::make_pair(edgeLeft, edgeRight));
-				usedPairs.insert(std::make_pair(_graph.complementEdge(edgeRight), 
-												_graph.complementEdge(edgeLeft)));
+	std::unordered_set<std::pair<GraphEdge*, GraphEdge*>, pairhash> usedPairs;
+	for (size_t i = 0; i < paths.size(); ++i)
+	{
+		for (auto& edge : edgeConnections[paths[i].path.back()])
+		{
+			auto outPath = edgeToPath[edge];
+			GraphEdge* edgeLeft = paths[i].path.back();
+			GraphEdge* edgeRight = edge;
 
-				std::string leftSign = contigLeft->id.strand() ? "+" :"-";
-				std::string leftName = contigLeft->nameUnsigned();
+			if (usedPairs.count(std::make_pair(edgeLeft, edgeRight))) continue;
+			usedPairs.insert(std::make_pair(edgeLeft, edgeRight));
+			usedPairs.insert(std::make_pair(_graph.complementEdge(edgeRight), 
+											_graph.complementEdge(edgeLeft)));
 
-				std::string rightSign = contigRight->id.strand() ? "+" :"-";
-				std::string rightName = contigRight->nameUnsigned();
+			std::string leftSign = paths[i].id.strand() ? "+" :"-";
+			std::string leftName = paths[i].nameUnsigned();
 
-				fprintf(fout, "L\t%s\t%s\t%s\t%s\t0M\n", leftName.c_str(), 
-						leftSign.c_str(), rightName.c_str(), rightSign.c_str());
-			}
+			std::string rightSign = outPath->id.strand() ? "+" :"-";
+			std::string rightName = outPath->nameUnsigned();
+
+			fprintf(fout, "L\t%s\t%s\t%s\t%s\t0M\n", leftName.c_str(), 
+					leftSign.c_str(), rightName.c_str(), rightSign.c_str());
 		}
 	}
 }
@@ -243,28 +251,45 @@ void OutputGenerator::outputDot(const std::vector<UnbranchingPath>& paths,
 								  "cadetblue1", "darkorchid", "aquamarine1", 
 								  "darkgoldenrod1", "deepskyblue1", 
 								  "darkolivegreen3"};
-	std::vector<GraphEdge*> dfsStack;
-	std::unordered_set<GraphEdge*> visited;
+	std::vector<GraphNode*> dfsStack;
+	std::unordered_set<GraphNode*> visited;
 	std::unordered_map<GraphEdge*, std::string> edgeColors;
 	size_t colorId = 0;
-	for (auto& edge: _graph.iterEdges())
+	for (auto& node : _graph.iterNodes())
 	{
-		if (!edge->isRepetitive() || visited.count(edge)) continue;
-		dfsStack.push_back(edge);
+		if (visited.count(node)) continue;
+		dfsStack.push_back(node);
 		while(!dfsStack.empty())
 		{
-			auto curEdge = dfsStack.back(); 
+			auto curNode = dfsStack.back(); 
 			dfsStack.pop_back();
-			if (visited.count(curEdge)) continue;
-			edgeColors[curEdge] = COLORS[colorId];
-			edgeColors[_graph.complementEdge(curEdge)] = COLORS[colorId];
-			visited.insert(curEdge);
-			visited.insert(_graph.complementEdge(curEdge));
-			for (auto adjEdge: curEdge->adjacentEdges())
+			if (visited.count(curNode)) continue;
+
+			visited.insert(curNode);
+			visited.insert(_graph.complementNode(curNode));
+			
+			for (auto adjEdge: curNode->outEdges)
 			{
-				if (adjEdge->isRepetitive() && !visited.count(adjEdge))
+				if (adjEdge->isRepetitive())
 				{
-					dfsStack.push_back(adjEdge);
+					edgeColors[adjEdge] = COLORS[colorId];
+					edgeColors[_graph.complementEdge(adjEdge)] = COLORS[colorId];
+					if (!visited.count(adjEdge->nodeRight))
+					{
+						dfsStack.push_back(adjEdge->nodeRight);
+					}
+				}
+			}
+			for (auto adjEdge: curNode->inEdges)
+			{
+				if (adjEdge->isRepetitive())
+				{
+					edgeColors[adjEdge] = COLORS[colorId];
+					edgeColors[_graph.complementEdge(adjEdge)] = COLORS[colorId];
+					if (!visited.count(adjEdge->nodeLeft))
+					{
+						dfsStack.push_back(adjEdge->nodeLeft);
+					}
 				}
 			}
 		}

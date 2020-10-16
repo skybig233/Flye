@@ -36,6 +36,9 @@ public:
 					   		   std::vector<GraphAlignment>> AlnIndex;
 	AlnIndex makeAlignmentIndex();
 
+	typedef std::unordered_map<GraphEdge*, std::unordered_set<GraphEdge*>> ConnIndex;
+	ConnIndex getEdgeConnectivity() const;
+
 private:
 	std::vector<GraphAlignment> 
 		chainReadAlignments(const std::vector<EdgeAlignment>& ovlps) const;

@@ -801,6 +801,7 @@ void RepeatResolver::clearResolvedRepeats()
 int RepeatResolver::resolveSimpleRepeats()
 {
 	static const int MIN_JCT_SUPPORT = 1;
+	static const int MAX_DEGREE = 5;
 
 	auto alnIndex = _aligner.makeAlignmentIndex();
 
@@ -812,15 +813,15 @@ int RepeatResolver::resolveSimpleRepeats()
 	{
 		if (!pathToResolve.id.strand()) continue;
 		if (pathToResolve.path.front()->selfComplement) continue;
+		if (pathToResolve.nodeLeft()->outEdges.size() != 1 ||
+			pathToResolve.nodeRight()->inEdges.size() != 1) continue;
 
 		std::unordered_set<GraphEdge*> inputs(pathToResolve.nodeLeft()->inEdges.begin(),
 											  pathToResolve.nodeLeft()->inEdges.end());
 		std::unordered_set<GraphEdge*> outputs(pathToResolve.nodeRight()->outEdges.begin(),
 											   pathToResolve.nodeRight()->outEdges.end());
-		if (pathToResolve.nodeLeft()->outEdges.size() != 1 ||
-			pathToResolve.nodeRight()->inEdges.size() != 1 ||
-			inputs.size() != outputs.size() ||
-			inputs.size() <= 1) continue;
+		if (inputs.size() != outputs.size() || 
+			inputs.size() <= 1 || inputs.size() > MAX_DEGREE) continue;
 
 		std::unordered_map<GraphEdge*, 
 					   	   std::unordered_map<GraphEdge*, int>> readSupport;
