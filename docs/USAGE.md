@@ -134,13 +134,13 @@ generate more complete assemblies.
 
 ### PacBio CLR
 
-Flye was tested on raw PacBio CLR reads (P5C3 and P6C4) with error rate ~15%.
-Note that Flye assumes that the input files represent PacBio subreads,
-e.g. adaptors and noise are trimmed and multiple passes of the same insertion
-sequence are separated. This is typically handled by PacBio instruments/toolchains,
-however we saw examples of incorrect third-party raw -> fastq conversions, 
-which resulted into incorrectly trimmed data. In case Flye is failing to
-get reasonable assemblies, make sure that your reads are properly preprocessed.
+Flye was tested on raw PacBio CLR reads (P5C3/P6C4/Sequel) with error rate ~15%.
+
+Note that in PacBio mode, Flye assumes that the input files represent PacBio subreads, 
+e.g. adaptors and scraps are removed and multiple passes of the same insertion sequence are separated. 
+This is typically handled by PacBio instruments/toolchains, however we saw examples of problemmatic 
+raw -> fastq conversions, which resulted into incorrectl subreads. 
+In this case, consider using [pbclip](https://github.com/fenderglass/pbclip) to fix your Fasta/q reads.
 
 ### Error-corrected reads input
 
