@@ -123,7 +123,8 @@ The dataset was originally released by the
 
 We performed our benchmarks with raw ONT reads (R7-R10) with error rate 5-15%.
 Due to the biased error pattern, per-nucleotide accuracy is usually lower for 
-ONT data than with PacBio data, especially in homopolymer regions.
+ONT data than with PacBio data, especially in homopolymer regions. Use `--nano-raw` 
+mode for ONT reads. 
 
 ### PacBio HiFi
 
@@ -135,6 +136,7 @@ generate more complete assemblies.
 ### PacBio CLR
 
 Flye was tested on raw PacBio CLR reads (P5C3/P6C4/Sequel) with error rate ~15%.
+Use `--pacbio-raw` mode for PacBio CLR.
 
 Note that in PacBio mode, Flye assumes that the input files represent PacBio subreads, 
 e.g. adaptors and scraps are removed and multiple passes of the same insertion sequence are separated. 
@@ -145,7 +147,7 @@ In this case, consider using [pbclip](https://github.com/fenderglass/pbclip) to 
 ### Error-corrected reads input
 
 While Flye was designed for assembly of raw reads (and this is the recommended way),
-it also supports error-corrected PacBio/ONT reads as input (use the ```corr``` option).
+it also supports error-corrected PacBio/ONT reads as input (use the correspondning ```corr``` option).
 The parameters are optimized for error rates <3%. If you are getting highly 
 fragmented assembly - most likely error rates in your reads are higher. In this case,
 consider to assemble using the raw reads instead.
