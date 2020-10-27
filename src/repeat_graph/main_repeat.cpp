@@ -220,6 +220,7 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Simplifying the graph";
 
 	multInf.removeUnsupportedEdges(/*only tips*/ true);
+	multInf.removeUnsupportedConnections();
 	//rg.validateGraph();
 	
 	RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
@@ -243,7 +244,6 @@ int repeat_main(int argc, char** argv)
 		Logger::get().debug() << "[SIMPL] == Iteration " << iterNum << " ==";
 
 		actions += multInf.splitNodes();
-		//actions += multInf.removeUnsupportedConnections();
 		if (isMeta) 
 		{
 			actions += multInf.disconnectMinorPaths();
