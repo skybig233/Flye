@@ -450,7 +450,7 @@ int MultiplicityInferer::splitNodes()
 //edge coverage
 int MultiplicityInferer::removeUnsupportedConnections()
 {
-	static const int MIN_JCT_SUPPORT = 2;
+	//static const int MIN_JCT_SUPPORT = 2;
 
 	std::unordered_map<GraphEdge*, int32_t> rightConnections;
 	std::unordered_map<GraphEdge*, int32_t> leftConnections;
@@ -484,7 +484,8 @@ int MultiplicityInferer::removeUnsupportedConnections()
 		//int32_t coverageThreshold = edge->meanCoverage / 
 		//						Config::get("graph_cov_drop_rate");
 		//coverageThreshold = std::max(MIN_JCT_SUPPORT, coverageThreshold);
-		int32_t coverageThreshold = MIN_JCT_SUPPORT;
+		//int32_t coverageThreshold = MIN_JCT_SUPPORT;
+		int32_t coverageThreshold = (edge->meanCoverage >= 10) ? 2 : 1;
 
 		//Logger::get().debug() << "Adjacencies: " << edge->edgeId.signedId() << " "
 		//	<< leftConnections[edge] / 2 << " " << rightConnections[edge] / 2;

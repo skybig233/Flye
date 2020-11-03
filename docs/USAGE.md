@@ -54,6 +54,8 @@ optional arguments:
                         minimum overlap between reads [auto]
   --asm-coverage int    reduced coverage for initial disjointig assembly [not
                         set]
+  --hifi-error float    expected HiFi reads error rate (e.g. 0.01 or 0.001)
+                        [0.01]
   --plasmids            rescue short unassembled plasmids
   --meta                metagenome / uneven coverage mode
   --keep-haplotypes     do not collapse alternative haplotypes
@@ -121,27 +123,31 @@ The dataset was originally released by the
 
 We performed our benchmarks with raw ONT reads (R7-R10) with error rate 5-15%.
 Due to the biased error pattern, per-nucleotide accuracy is usually lower for 
-ONT data than with PacBio data, especially in homopolymer regions.
+ONT data than with PacBio data, especially in homopolymer regions. Use `--nano-raw` 
+mode for ONT reads. 
 
 ### PacBio HiFi
 
 Flye now supports assembly of PacBio HiFi protocol via `--pacbio-hifi` option.
-The expected read error is <1%.
+The expected read error is 1% by default. In case the reads are more accurate,
+you can adjust `--hifi-error` parameter (for example to 0.001) to potentially
+generate more complete assemblies.
 
 ### PacBio CLR
 
-Flye was tested on raw PacBio CLR reads (P5C3 and P6C4) with error rate ~15%.
-Note that Flye assumes that the input files represent PacBio subreads,
-e.g. adaptors and noise are trimmed and multiple passes of the same insertion
-sequence are separated. This is typically handled by PacBio instruments/toolchains,
-however we saw examples of incorrect third-party raw -> fastq conversions, 
-which resulted into incorrectly trimmed data. In case Flye is failing to
-get reasonable assemblies, make sure that your reads are properly preprocessed.
+Flye was tested on raw PacBio CLR reads (P5C3/P6C4/Sequel) with error rate ~15%.
+Use `--pacbio-raw` mode for PacBio CLR.
+
+Note that in PacBio mode, Flye assumes that the input files represent PacBio subreads, 
+e.g. adaptors and scraps are removed and multiple passes of the same insertion sequence are separated. 
+This is typically handled by PacBio instruments/toolchains, however we saw examples of problemmatic 
+raw -> fastq conversions, which resulted into incorrectl subreads. 
+In this case, consider using [pbclip](https://github.com/fenderglass/pbclip) to fix your Fasta/q reads.
 
 ### Error-corrected reads input
 
 While Flye was designed for assembly of raw reads (and this is the recommended way),
-it also supports error-corrected PacBio/ONT reads as input (use the ```corr``` option).
+it also supports error-corrected PacBio/ONT reads as input (use the correspondning ```corr``` option).
 The parameters are optimized for error rates <3%. If you are getting highly 
 fragmented assembly - most likely error rates in your reads are higher. In this case,
 consider to assemble using the raw reads instead.
@@ -347,7 +353,7 @@ The assemblies generated using Flye 2.8 could be downloaded from [Zenodo](https:
 All datasets were run with default parameters for the corresponding read type
 with the following exceptions: CHM13 T2T was run with `--min-overlap 10000 --asm-coverage 50`;
 CHM1 was run with `--asm-coverage 50`. CHM13 HiFi and HG002 HiFi datasets were run in
-`--pacbio-hifi` mode and reduced error rate threshold (0.003%).
+`--pacbio-hifi` mode and `--hifi-error 0.003`.
 
 ## <a name="algorithm"></a> Algorithm Description
 

@@ -3,7 +3,7 @@ Flye assembler
 
 [![BioConda Install](https://img.shields.io/conda/dn/bioconda/flye.svg?style=flag&label=BioConda%20install)](https://anaconda.org/bioconda/flye)
 
-### Version: 2.8
+### Version: 2.8.1
 
 Flye is a de novo assembler for single molecule sequencing reads,
 such as those produced by PacBio and Oxford Nanopore Technologies.
@@ -22,7 +22,10 @@ Manuals
 Latest updates
 --------------
 
-### Flye 2.8 release (08 Aug 2020)
+### Flye 2.8.1 release (02 Sep 2020)
+* Added a new option `--hifi-error` to control the expected error rate of HiFi reads (no other changes)
+
+### Flye 2.8 release (04 Aug 2020)
 * Improvements in contiguity and speed for PacBio HiFi mode
 * Using the `--meta` k-mer selection strategy in isolate assemblies as well.
 This strategy is more robust to drops in coverage/contamination and reqires less memory
@@ -128,7 +131,7 @@ The assemblies generated using Flye 2.8 could be downloaded from [Zenodo](https:
 All datasets were run with default parameters for the corresponding read type
 with the following exceptions: CHM13 T2T was run with `--min-overlap 10000 --asm-coverage 50`;
 CHM1 was run with `--asm-coverage 50`. CHM13 HiFi and HG002 HiFi datasets were run in
-`--pacbio-hifi` mode and reduced error rate threshold (0.003%).
+`--pacbio-hifi` mode and `--hifi-error 0.003`.
 
 Third-party
 -----------
@@ -164,18 +167,21 @@ Main code contributors:
 
 Publications
 ------------
+
+Mikhail Kolmogorov, Derek M. Bickhart, Bahar Behsaz, Alexey Gurevich, Mikhail Rayko, Sung Bong
+Shin, Kristen Kuhn, Jeffrey Yuan, Evgeny Polevikov, Timothy P. L. Smith and Pavel A. Pevzner
+"metaFlye: scalable long-read metagenome assembly using repeat graphs", Nature Methods, 2020
+[doi:s41592-020-00971-x](https://doi.org/10.1038/s41592-020-00971-x)
+
 Mikhail Kolmogorov, Jeffrey Yuan, Yu Lin and Pavel Pevzner, 
 "Assembly of Long Error-Prone Reads Using Repeat Graphs", Nature Biotechnology, 2019
 [doi:10.1038/s41587-019-0072-8](https://doi.org/10.1038/s41587-019-0072-8)
-
-Mikhail Kolmogorov, Mikhail Rayko, Jeffrey Yuan, Evgeny Polevikov, Pavel Pevzner,
-"metaFlye: scalable long-read metagenome assembly using repeat graphs", bioRxiv, 2019
-[doi:10.1101/637637](https://doi.org/10.1101/637637)
 
 Yu Lin, Jeffrey Yuan, Mikhail Kolmogorov, Max W Shen, Mark Chaisson and Pavel Pevzner, 
 "Assembly of Long Error-Prone Reads Using de Bruijn Graphs", PNAS, 2016
 [doi:10.1073/pnas.1604560113](https://www.doi.org/10.1073/pnas.1604560113)
 
+**How to cite**: the 2020 paper is the most relevant to metagenome assembly. For single genome assembly, use the 2019 paper as reference. The 2016 paper describes solid k-mer indexing and polishing approaches that are used as core algorithms in the current pipeline.
 
 How to get help
 ---------------

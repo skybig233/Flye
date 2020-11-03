@@ -1,4 +1,8 @@
-Flye 2.8 release (08 Aug 2020)
+Flye 2.8.1 release (02 Sep 2020)
+===============================
+* Added a new option `--hifi-error` to control the expected error rate of HiFi reads (no other changes)
+
+Flye 2.8 release (04 Aug 2020)
 ==============================
 * Improvements in contiguity and speed for PacBio HiFi mode
 * Using the `--meta` k-mer selection strategy in isolate assemblies as well.
