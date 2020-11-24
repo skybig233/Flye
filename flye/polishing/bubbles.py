@@ -13,6 +13,7 @@ from bisect import bisect
 from flye.six.moves import range
 
 import multiprocessing
+import traceback
 import signal
 
 import flye.utils.fasta_parser as fp
@@ -81,6 +82,8 @@ def _thread_worker(aln_reader, contigs_info, err_mode,
             del ctg_bubbles
 
     except Exception as e:
+        logger.error("Thread exception")
+        logger.error(traceback.format_exc())
         error_queue.put(e)
 
 
