@@ -1,3 +1,10 @@
+Flye 2.8.2 release (12 Dec 2020)
+===============================
+* Improvements in GFA output, much faster generation of large and tangled graphs
+* Speed improvements for graph simplification algorithms
+* A few minor bugs fixed
+* Assemblies should be largely identical to 2.8
+
 Flye 2.8.1 release (02 Sep 2020)
 ===============================
 * Added a new option `--hifi-error` to control the expected error rate of HiFi reads (no other changes)
