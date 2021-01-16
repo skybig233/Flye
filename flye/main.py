@@ -224,6 +224,11 @@ class JobContigger(Job):
                                 self.work_dir, self.log_file, self.args.asm_config,
                                 self.repeat_graph, self.reads_alignment)
 
+        if os.path.getsize(self.out_files["contigs"]) == 0:
+            raise asm.AssembleException("No contigs were assembled - "
+                                        "pipeline stopped")
+
+
 
 def _list_files(startpath, maxlevel=1):
     for root, _, files in os.walk(startpath):
@@ -532,6 +537,8 @@ def _run(args):
     for read_file in args.reads:
         if not os.path.exists(read_file):
             raise ResumeException("Can't open " + read_file)
+        if " " in read_file:
+            raise ResumeException("Path to reads contain spaces: " + read_file)
 
     save_file = os.path.join(args.out_dir, "params.json")
     jobs = _create_job_list(args, args.out_dir, args.log_file)

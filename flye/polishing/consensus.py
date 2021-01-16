@@ -15,6 +15,7 @@ from flye.six import itervalues
 
 import multiprocessing
 import signal
+import traceback
 
 from flye.polishing.alignment import shift_gaps, get_uniform_alignments
 from flye.utils.sam_parser import SynchronizedSamReader
@@ -46,6 +47,8 @@ def _thread_worker(aln_reader, contigs_info, platform, results_queue,
             results_queue.put((ctg_id, sequence, aln_errors))
 
     except Exception as e:
+        logger.error("Thread exception")
+        logger.error(traceback.format_exc())
         error_queue.put(e)
 
 

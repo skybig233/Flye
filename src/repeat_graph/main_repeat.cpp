@@ -220,7 +220,7 @@ int repeat_main(int argc, char** argv)
 	Logger::get().info() << "Simplifying the graph";
 
 	multInf.removeUnsupportedEdges(/*only tips*/ true);
-	multInf.removeUnsupportedConnections();
+	//multInf.removeUnsupportedConnections();
 	//rg.validateGraph();
 	
 	RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);

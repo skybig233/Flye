@@ -15,6 +15,7 @@ import logging
 from itertools import combinations, product
 import copy
 import multiprocessing, signal
+import traceback
 
 import flye.polishing.alignment as flye_aln
 from flye.utils.sam_parser import SynchronizedSamReader, Alignment
@@ -67,6 +68,8 @@ def resolve_repeats(args, trestle_dir, repeats_info, summ_file,
             results_queue.put(result)
 
         except Exception as e:
+            logger.error("Thread exception")
+            logger.error(traceback.format_exc())
             error_queue.put(e)
 
     job_chunks = [repeat_list[i:i + args.threads]
