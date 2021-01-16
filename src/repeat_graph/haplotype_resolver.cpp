@@ -1043,6 +1043,9 @@ int HaplotypeResolver::findSuperbubbles()
 		if (!fwdBubble.end || startEdge == fwdBubble.end ||
 			startEdge == _graph.complementEdge(fwdBubble.end)) continue;
 
+		//prohibit complex loops to be called as superbubbles
+		if (startEdge->nodeRight == fwdBubble.end->nodeLeft) continue;
+
 		//in the opposite direction, both directions must agree
 		/*auto revBubble = isRightSuperbubble(_graph.complementEdge(fwdBubble.end),
 											MAX_BUBBLE_LEN, _graph, loopedEdges);
