@@ -145,9 +145,10 @@ ConsensusGenerator::AlignmentsMap
 			//in case of long reads, only consider last 20k of the overlap to
 			//save memory during pairwise alignmemnt
 			const int32_t MAX_ALIGNMENT = 20000;
-			if (curOverlap.curRange() > MAX_ALIGNMENT)
+			int32_t endShift = std::min(curOverlap.curRange(), 
+										curOverlap.extRange()) - MAX_ALIGNMENT;
+			if (endShift > 0)
 			{
-				int32_t endShift = curOverlap.curRange() - MAX_ALIGNMENT;
 				curOverlap.curEnd -= endShift;
 				curOverlap.extEnd -= endShift;
 			}
