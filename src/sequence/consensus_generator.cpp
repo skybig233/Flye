@@ -48,6 +48,8 @@ FastaRecord ConsensusGenerator::generateLinear(const ContigPath& path,
 {
 	std::vector<FastaRecord> contigParts;
 
+	//Logger::get().debug() << "Stitching " << path.name;
+
 	auto prevSwitch = std::make_pair(0, 0);
 	std::string contigSequence;
 	for (size_t i = 0; i < path.sequences.size(); ++i)
@@ -67,6 +69,8 @@ FastaRecord ConsensusGenerator::generateLinear(const ContigPath& path,
 		if (rightCut - leftCut > 0)	//shoudn't happen, but just in case
 		{
 			contigSequence += sequence.substr(leftCut, rightCut - leftCut).str();
+			//Logger::get().debug() << "\tPiece " << sequence.length() << " " 
+			//	<< leftCut << " " << rightCut << " " << rightCut - path.overlaps[i].curBegin;
 		}
 	}
 	int32_t cutLen = contigSequence.length() - (path.trimLeft + path.trimRight);
@@ -83,41 +87,73 @@ ConsensusGenerator::AlignmentsMap
 	ConsensusGenerator::generateAlignments(const std::vector<ContigPath>& contigs,
 										   bool verbose)
 {
-	typedef std::pair<const ContigPath*, size_t> AlnTask;
+	//typedef std::pair<const ContigPath*, size_t> AlnTask;
+	struct AlnTask
+	{
+		const ContigPath* path;
+		size_t contigId;
+		OverlapRange adjustedOverlap;
+	};
 
 	AlignmentsMap alnMap;
 	std::mutex mapMutex;
 	std::function<void(const AlnTask&)> alnFunc =
 	[&alnMap, &mapMutex](const AlnTask& task)
 	{
-		const ContigPath* path = task.first;
-		size_t i = task.second;
+		const ContigPath* path = task.path;
+		size_t i = task.contigId;
+		auto curOverlap = task.adjustedOverlap;
 
 		std::vector<CigOp> cigar;
 		const float maxErr = 0.3;
 		std::string alignedLeft;
 		std::string alignedRight;
-		getAlignmentCigarKsw(path->sequences[i], path->overlaps[i].curBegin, path->overlaps[i].curRange(),
-			   			     path->sequences[i + 1], path->overlaps[i].extBegin, path->overlaps[i].extRange(),
+		getAlignmentCigarKsw(path->sequences[i], curOverlap.curBegin, curOverlap.curRange(),
+			   			     path->sequences[i + 1], curOverlap.extBegin, curOverlap.extRange(),
 			   			   	 maxErr, cigar);
-		decodeCigar(cigar, path->sequences[i], path->overlaps[i].curBegin,
-				 	path->sequences[i + 1], path->overlaps[i].extBegin,
+		decodeCigar(cigar, path->sequences[i], curOverlap.curBegin,
+				 	path->sequences[i + 1], curOverlap.extBegin,
 				 	alignedLeft, alignedRight);
 
 		{
 			std::lock_guard<std::mutex> lock(mapMutex);
 			alnMap[&path->overlaps[i]] = {alignedLeft, alignedRight, 
-						 				  path->overlaps[i].curBegin, 
-										  path->overlaps[i].extBegin};
+						 				  curOverlap.curBegin, 
+										  curOverlap.extBegin};
 		}
 	};
 
 	std::vector<AlnTask> tasks;
 	for (auto& path : contigs)
 	{
+		int32_t prevSwitch = 0;
 		for (size_t i = 0; i < path.sequences.size() - 1; ++i)
 		{
-			tasks.emplace_back(&path, i);
+			OverlapRange curOverlap = path.overlaps[i];
+
+			//don't compute alignment for regions we know will
+			//not be used for stitching
+			int32_t beginShift = prevSwitch - curOverlap.curBegin;
+			if (beginShift > 0 && 
+				beginShift < std::min(curOverlap.curRange(), curOverlap.extRange()))
+			{
+				curOverlap.curBegin += beginShift;
+				curOverlap.extBegin += beginShift;
+			}
+			prevSwitch = curOverlap.extBegin;
+
+			//in case of long reads, only consider last 20k of the overlap to
+			//save memory during pairwise alignmemnt
+			const int32_t MAX_ALIGNMENT = 20000;
+			int32_t endShift = std::min(curOverlap.curRange(), 
+										curOverlap.extRange()) - MAX_ALIGNMENT;
+			if (endShift > 0)
+			{
+				curOverlap.curEnd -= endShift;
+				curOverlap.extEnd -= endShift;
+			}
+
+			tasks.push_back({&path, i, curOverlap});
 		}
 	}
 	processInParallel(tasks, alnFunc, Parameters::get().numThreads, verbose);
@@ -128,8 +164,11 @@ ConsensusGenerator::AlignmentsMap
 
 std::pair<int32_t, int32_t> 
 ConsensusGenerator::getSwitchPositions(const AlignmentInfo& aln,
-									int32_t prevSwitch)
+									   int32_t prevSwitch)
 {
+	const int MIN_SEGMENT = 500;
+	const int MIN_MATCH = 15;
+
 	int leftPos = aln.startOne;
 	int rightPos = aln.startTwo;
 	int matchRun = 0;
@@ -138,8 +177,8 @@ ConsensusGenerator::getSwitchPositions(const AlignmentInfo& aln,
 		if (aln.alnOne[i] != '-') ++leftPos;
 		if (aln.alnTwo[i] != '-') ++rightPos;
 
-		if (aln.alnOne[i] == aln.alnTwo[i] &&
-			leftPos > prevSwitch + Config::get("maximum_jump"))
+		if (aln.alnOne[i] != '-' && aln.alnTwo[i] != '-' &&
+			leftPos > prevSwitch + MIN_SEGMENT)
 		{
 			++matchRun;
 		}
@@ -147,11 +186,19 @@ ConsensusGenerator::getSwitchPositions(const AlignmentInfo& aln,
 		{
 			matchRun = 0;
 		}
-		if (matchRun == (int)Parameters::get().kmerSize)
+		if (matchRun == MIN_MATCH)
 		{
 			return {leftPos, rightPos};
 		}
 	}
+
+	//Logger::get().debug() << "Prev: " << prevSwitch;
+	//for (size_t i = 0; i < aln.alnOne.size() / 100; ++i)
+	//{
+	//	Logger::get().debug() << aln.alnOne.substr(i * 100, 100);
+	//	Logger::get().debug() << aln.alnTwo.substr(i * 100, 100);
+	//	Logger::get().debug() << "";
+	//}
 
 	//Logger::get().info() << "No jump found!";
 	prevSwitch = std::max(prevSwitch + 1, aln.startOne);

@@ -157,7 +157,15 @@ float getAlignmentCigarKsw(const DnaSequence& trgSeq, size_t trgBegin, size_t tr
 		if (bandWidth > (int)std::max(qryByte.size(), trgByte.size())) break; //just in case
 		bandWidth *= 2;
 	}
-	//std::cout << bandWidth << std::endl;
+
+	/*static std::mutex logMut;
+	if (qryByte.size() > 20000 || trgByte.size() > 20000)
+	{
+		logMut.lock();
+		Logger::get().debug() << "Aln: " << qryByte.size() << " " 
+			<< trgByte.size() << " " << bandWidth;
+		logMut.unlock();
+	}*/
 	
 	int numMatches = 0;
 	int numMiss = 0;
