@@ -518,6 +518,12 @@ def _run_polisher_only(args):
     logger.info("Running Flye polisher")
     logger.debug("Cmd: %s", " ".join(sys.argv))
 
+    for read_file in args.reads:
+        if not os.path.exists(read_file):
+            raise ResumeException("Can't open " + read_file)
+        if " " in read_file:
+            raise ResumeException("Path to reads contain spaces: " + read_file)
+
     pol.polish(args.polish_target, args.reads, args.out_dir,
                args.num_iters, args.threads, args.platform,
                output_progress=True)
