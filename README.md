@@ -3,7 +3,7 @@ Flye assembler
 
 [![BioConda Install](https://img.shields.io/conda/dn/bioconda/flye.svg?style=flag&label=BioConda%20install)](https://anaconda.org/bioconda/flye)
 
-### Version: 2.8.2
+### Version: 2.8.3
 
 Flye is a de novo assembler for single molecule sequencing reads,
 such as those produced by PacBio and Oxford Nanopore Technologies.
@@ -21,6 +21,11 @@ Manuals
 
 Latest updates
 --------------
+
+### Flye 2.8.3 release (10 Feb 2020)
+* Reduced RAM consumption for some ultra-long ONT datasets
+* Fixed rare artifical sequence insertions on some ONT datasets
+* Asseemblies should be largely identical to 2.8
 
 ### Flye 2.8.2 release (12 Dec 2020)
 * Improvements in GFA output, much faster generation of large and tangled graphs
