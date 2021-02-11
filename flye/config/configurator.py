@@ -30,13 +30,24 @@ def setup_params(args):
     total_length = 0
     read_lengths = []
     MAX_READ_LEN = 2 ** 31 - 1
+
+    lowest_read_len = cfg.vals["min_overlap_range"][args.read_type][0]
+    if args.min_overlap:
+        lowest_read_len = args.min_overlap
+    passing_reads = 0
+
     for read_file in args.reads:
         for _, seq_len in iteritems(fp.read_sequence_lengths(read_file)):
             if seq_len > MAX_READ_LEN:
                 raise ConfigException("Length of single read in '{}' exceeded maximum ({})".format(read_file, MAX_READ_LEN))
+            if seq_len > lowest_read_len:
+                passing_reads += 1
 
             total_length += seq_len
             read_lengths.append(seq_len)
+
+    if not passing_reads:
+        raise ConfigException("No reads above minimum length threshold ({})".format(lowest_read_len))
 
     _, reads_n50 = _calc_nx(read_lengths, total_length, 0.50)
     _, reads_n90 = _calc_nx(read_lengths, total_length, 0.90)
