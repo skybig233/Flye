@@ -25,7 +25,7 @@ import flye.assembly.scaffolder as scf
 from flye.__version__ import __version__
 from flye.__build__ import __build__
 import flye.config.py_cfg as cfg
-from flye.config.configurator import setup_params
+from flye.config.configurator import setup_params, ConfigException
 from flye.utils.bytes2human import human2bytes, bytes2human
 from flye.utils.sam_parser import AlignmentException
 import flye.utils.fasta_parser as fp
@@ -808,7 +808,7 @@ def main():
 
     except (AlignmentException, pol.PolishException,
             asm.AssembleException, repeat.RepeatException,
-            ResumeException, fp.FastaError) as e:
+            ResumeException, fp.FastaError, ConfigException) as e:
         logger.error(e)
         logger.error("Pipeline aborted")
         return 1

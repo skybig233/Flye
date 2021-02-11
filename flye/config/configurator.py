@@ -18,6 +18,10 @@ from flye.six import iteritems
 logger = logging.getLogger()
 
 
+class ConfigException(Exception):
+    pass
+
+
 def setup_params(args):
     logger.info("Configuring run")
     parameters = {}
@@ -25,8 +29,12 @@ def setup_params(args):
 
     total_length = 0
     read_lengths = []
+    MAX_READ_LEN = 2 ** 31 - 1
     for read_file in args.reads:
         for _, seq_len in iteritems(fp.read_sequence_lengths(read_file)):
+            if seq_len > MAX_READ_LEN:
+                raise ConfigException("Length of single read in '{}' exceeded maximum ({})".format(read_file, MAX_READ_LEN))
+
             total_length += seq_len
             read_lengths.append(seq_len)
 
