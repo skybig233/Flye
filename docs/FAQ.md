@@ -101,7 +101,7 @@ of datasets with coverage below 10x is not recommended.
 How do I select genome size if I don't know it in advance?
 ----------------------------------------------------------
 
-(Note: enome size parameter is not required since the version 2.8)
+(Note: genome size parameter is not required since the version 2.8)
 
 The genome size estimate is used for solid k-mer selection in the
 initial disjointig assembly stage. Flye is not very sensitive to
