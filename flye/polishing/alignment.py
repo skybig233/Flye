@@ -244,7 +244,7 @@ def _run_minimap(reference_file, reads_files, num_proc, mode, out_file,
                               "set -eo pipefail; " + " ".join(cmdline)],
                               stderr=open(stderr_file, "w"),
                               stdout=open(out_file, "w"))
-        os.remove(stderr_file)
+        #os.remove(stderr_file)
 
     except (subprocess.CalledProcessError, OSError) as e:
         logger.error("Error running minimap2, terminating. See the alignment error log "

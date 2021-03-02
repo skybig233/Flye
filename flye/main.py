@@ -333,7 +333,7 @@ class JobConsensus(Job):
         merged_fasta = aln.merge_chunks(consensus_fasta)
         fp.write_fasta_dict(merged_fasta, self.out_consensus)
         os.remove(chunks_file)
-        os.remove(out_alignment)
+        #os.remove(out_alignment)
 
 
 class JobPolishing(Job):
