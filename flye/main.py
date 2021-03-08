@@ -788,6 +788,8 @@ def main():
         os.mkdir(args.out_dir)
     args.out_dir = os.path.abspath(args.out_dir)
 
+    args.reads = [os.path.abspath(r) for r in args.reads]
+
     args.log_file = os.path.join(args.out_dir, "flye.log")
     _enable_logging(args.log_file, args.debug,
                     overwrite=False)
