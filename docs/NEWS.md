@@ -1,4 +1,4 @@
-Flye 2.8.3 release (10 Feb 2020)
+Flye 2.8.3 release (10 Feb 2021)
 ===============================
 * Reduced RAM consumption for some ultra-long ONT datasets
 * Fixed rare artifical sequence insertions on some ONT datasets
