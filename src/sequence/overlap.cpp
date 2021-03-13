@@ -108,8 +108,8 @@ OverlapDetector::getSeqOverlaps(const FastaRecord& fastaRec,
 	const int kmerSize = Parameters::get().kmerSize;
 	//const float minKmerSruvivalRate = std::exp(-_maxDivergence * kmerSize);
 	const float minKmerSruvivalRate = 0.01;
-	const float LG_GAP = 2;
-	const float SM_GAP = 0.5;
+	const float LG_GAP = 0.1;
+	const float SM_GAP = 0.1;
 
 	//outSuggestChimeric = false;
 	int32_t curLen = fastaRec.sequence.length();
@@ -513,7 +513,6 @@ bool OverlapContainer::hasSelfOverlaps(FastaRecord::Id readId)
 	if (!readId.strand()) readId = readId.rc();
 	return _overlapIndex.find(readId).suggestChimeric;
 }
-
 
 std::vector<OverlapRange> 
 	OverlapContainer::quickSeqOverlaps(FastaRecord::Id readId, int maxOverlaps, 
