@@ -13,6 +13,39 @@
 #include "../common/parallel.h"
 #include "extender.h"
 
+namespace
+{
+	OverlapRange getOverlapBetween(OverlapContainer& ovlpCnt, FastaRecord::Id readOne, FastaRecord::Id readTwo)
+	{
+		bool found = false;
+		OverlapRange readsOvlp;
+
+		for (const auto& ovlp : ovlpCnt.lazySeqOverlaps(readOne))
+		{
+			if (ovlp.extId == readTwo) 
+			{
+				readsOvlp = ovlp;
+				found = true;
+				break;
+			}
+		}
+		for (const auto& ovlp : ovlpCnt.lazySeqOverlaps(readTwo))
+		{
+			if (ovlp.extId == readOne) 
+			{
+				if (!found || readsOvlp.minRange() < ovlp.minRange())
+				{
+					readsOvlp = ovlp.reverse();
+					found = true;
+					break;
+				}
+			}
+		}
+		if (!found) throw std::runtime_error("Ovlp not found!");
+
+		return readsOvlp;
+	}
+}
 
 Extender::ExtensionInfo Extender::extendDisjointig(FastaRecord::Id startRead)
 {
@@ -271,6 +304,8 @@ void Extender::assembleDisjointigs()
 		//Good to go!
 		ExtensionInfo exInfo = this->extendDisjointig(startRead);
 
+		auto innerReadsPrecise = this->getInnerReads(exInfo);
+
 		//Exclusive part - updating the overall assembly
 		std::lock_guard<std::mutex> guard(indexMutex);
 
@@ -317,8 +352,6 @@ void Extender::assembleDisjointigs()
 		//Logger::get().debug() << "Ovlp index size: " << _ovlpContainer.indexSize();
 		
 		//update inner read index
-		std::unordered_set<FastaRecord::Id> rightExtended;
-		std::unordered_set<FastaRecord::Id> leftExtended;
 		std::vector<OverlapRange> allOverlaps;
 		for (const auto& readId : exInfo.reads)
 		{
@@ -337,7 +370,8 @@ void Extender::assembleDisjointigs()
 				}
 			}
 		}
-		for (const auto& read : this->getInnerReads(allOverlaps))
+
+		for (const auto& read : innerReadsPrecise)
 		{
 			_innerReads.insert(read, true);
 			_innerReads.insert(read.rc(), true);
@@ -413,7 +447,60 @@ void Extender::assembleDisjointigs()
 
 
 std::vector<FastaRecord::Id> 
-	Extender::getInnerReads(const std::vector<OverlapRange>& ovlps)
+	Extender::getInnerReads(const ExtensionInfo& exInfo)
+{
+	//first, generate disjointig sequence
+	std::string disjSequence;
+
+	int32_t stitchBegin = 0;
+	int32_t stitchEnd = 0;
+	for (size_t i = 0; i < exInfo.reads.size() - 1; ++i)
+	{
+		auto readsOvlp = getOverlapBetween(_ovlpContainer, exInfo.reads[i], 
+										   exInfo.reads[i + 1]);
+
+		stitchEnd = readsOvlp.curEnd;
+		int32_t stitchLen = stitchEnd - stitchBegin;
+		if (stitchLen > 0)
+		{
+			//Logger::get().debug() << stitchBegin << " " << stitchEnd;
+			disjSequence += _readsContainer.getSeq(exInfo.reads[i])
+								.substr(stitchBegin, stitchEnd - stitchBegin).str();
+			stitchBegin = readsOvlp.extEnd;
+		}
+		else
+		{
+			//Logger::get().debug() << "Skip " << stitchLen;
+			stitchBegin = readsOvlp.extEnd - stitchLen;
+		}
+
+	}
+
+	int32_t stitchLen = _readsContainer.seqLen(exInfo.reads.back()) - stitchBegin;
+	if (stitchLen > 0)
+	{
+		disjSequence += _readsContainer.getSeq(exInfo.reads.back()).substr(stitchBegin, stitchLen).str();
+	}
+
+	//now, search against the reads index
+	FastaRecord fastaRec(DnaSequence(disjSequence), "", FastaRecord::ID_NONE);
+	auto disjOverlaps = _ovlpContainer.quickSeqOverlaps(fastaRec);
+
+	const int FLANK = (int)Config::get("maximum_overhang");
+	std::vector<FastaRecord::Id> innerReads;
+	for (auto& ovlp : disjOverlaps)
+	{
+		if (ovlp.extBegin < FLANK && ovlp.extLen - ovlp.extEnd < FLANK)
+		{
+			innerReads.push_back(ovlp.extId);
+		}
+	}
+	return innerReads;
+}
+
+
+std::vector<FastaRecord::Id> 
+	Extender::getInnerReadsFast(const std::vector<OverlapRange>& ovlps)
 {
 	static const int WINDOW = Config::get("chimera_window");
 	static const int OVERHANG = Config::get("maximum_overhang");
@@ -499,32 +586,8 @@ void Extender::convertToDisjointigs()
 
 		for (size_t i = 0; i < exInfo.reads.size() - 1; ++i)
 		{
-			bool found = false;
-			OverlapRange readsOvlp;
-
-			for (const auto& ovlp : _ovlpContainer.lazySeqOverlaps(exInfo.reads[i]))
-			{
-				if (ovlp.extId == exInfo.reads[i + 1]) 
-				{
-					readsOvlp = ovlp;
-					found = true;
-					break;
-				}
-			}
-			for (const auto& ovlp : _ovlpContainer.lazySeqOverlaps(exInfo.reads[i + 1]))
-			{
-				if (ovlp.extId == exInfo.reads[i]) 
-				{
-					if (!found || readsOvlp.minRange() < ovlp.minRange())
-					{
-						readsOvlp = ovlp.reverse();
-						found = true;
-						break;
-					}
-				}
-			}
-			if (!found) throw std::runtime_error("Ovlp not found!");
-
+			auto readsOvlp = getOverlapBetween(_ovlpContainer, exInfo.reads[i], 
+											   exInfo.reads[i + 1]);
 			path.sequences.push_back(_readsContainer.getSeq(exInfo.reads[i]));
 			path.overlaps.push_back(readsOvlp);
 		}

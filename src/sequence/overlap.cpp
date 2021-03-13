@@ -525,6 +525,14 @@ std::vector<OverlapRange>
 									  _divergenceStats, maxOverlaps);
 }
 
+std::vector<OverlapRange> 
+	OverlapContainer::quickSeqOverlaps(const FastaRecord& record, 
+									   int maxOverlaps, bool forceLocal)
+{
+	return _ovlpDetect.getSeqOverlaps(record, forceLocal, 
+									  _divergenceStats, maxOverlaps);
+}
+
 const std::vector<OverlapRange>&
 	OverlapContainer::lazySeqOverlaps(FastaRecord::Id readId)
 {

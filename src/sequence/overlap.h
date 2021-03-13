@@ -410,6 +410,10 @@ public:
 											   int maxOverlaps=0,
 											   bool forceLocal=false);
 
+	std::vector<OverlapRange> quickSeqOverlaps(const FastaRecord& record, 
+											   int maxOverlaps=0,
+											   bool forceLocal=false);
+
 	size_t indexSize() {return _indexSize;}
 
 	void estimateOverlaperParameters();

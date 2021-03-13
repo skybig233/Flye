@@ -62,7 +62,11 @@ private:
 	bool  extendsLeft(const OverlapRange& ovlp) const;
 	void  convertToDisjointigs();
 	std::vector<FastaRecord::Id> 
-		getInnerReads(const std::vector<OverlapRange>& ovlps);
+		getInnerReadsFast(const std::vector<OverlapRange>& ovlps);
+
+	std::vector<FastaRecord::Id> 
+		getInnerReads(const ExtensionInfo& exInfo);
+
 
 	const SequenceContainer& _readsContainer;
 	OverlapContainer& _ovlpContainer;
