@@ -142,12 +142,17 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 	auto coverage = this->getReadCoverage(readId, readOvlps);
 	if (coverage.empty()) return false;
 
+	const int CHIMERA_OVERHANG = 1000;
+	const int MAX_FLANK = CHIMERA_OVERHANG / Config::get("chimera_window");
+	int32_t goodStart = MAX_FLANK;
+	int32_t goodEnd = coverage.size() - MAX_FLANK - 1;
+
 	int32_t maxCov = 0;
 	int64_t sumCov = 0;
-	for (auto cov : coverage)
+	for (int32_t i = goodStart; i <= goodEnd; ++i)
 	{
-		maxCov = std::max(maxCov, cov);
-		sumCov += cov;
+		maxCov = std::max(maxCov, coverage[i]);
+		sumCov += coverage[i];
 	}
 	int32_t medianCoverage = median(coverage);
 	if (sumCov == 0) return true;
@@ -163,13 +168,6 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 		threshold = std::max(1L, std::lround(medianCoverage / MAX_DROP_RATE));
 	}
 
-	int32_t goodStart = 0;
-	int32_t goodEnd = coverage.size() - 1;
-	const int MAX_FLANK = (int)Config::get("maximum_overhang") / 
-							Config::get("chimera_window");
-	goodStart = MAX_FLANK;
-	goodEnd = coverage.size() - MAX_FLANK - 1;
-	
 	bool lowCoverage = false;
 	if (goodEnd <= goodStart) lowCoverage = true;
 	for (int32_t i = goodStart; i <= goodEnd; ++i)
@@ -194,7 +192,7 @@ bool ChimeraDetector::testReadByCoverage(FastaRecord::Id readId,
 	fout << _seqContainer.seqName(readId) << " " 
 		<< _seqContainer.seqLen(readId) << std::endl;
 	fout << covStr << std::endl;
-	fout << "max: " << maxCov << " mean: " << meanCoverage << " median: " << medianCoverage
+	fout << "max: " << maxCov << " median: " << medianCoverage
 		<< " threshold: " << threshold << " chim:" << lowCoverage << std::endl << std::endl;
 	logLock.unlock();*/
 
