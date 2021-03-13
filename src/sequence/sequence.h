@@ -84,6 +84,8 @@ public:
 
 	DnaSequence& operator=(const DnaSequence& other)
 	{
+		if (this == &other) return *this;
+
 		--_data->useCount;
 		if (_data->useCount == 0) delete _data;
 
@@ -95,6 +97,8 @@ public:
 
 	DnaSequence& operator=(DnaSequence&& other)
 	{
+		if (this == &other) return *this;
+
 		--_data->useCount;
 		if (_data->useCount == 0) delete _data;
 

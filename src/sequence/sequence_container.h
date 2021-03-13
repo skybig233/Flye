@@ -90,6 +90,8 @@ struct FastaRecord
 
 	FastaRecord& operator=(const FastaRecord& other)
 	{
+		if (this == &other) return *this;
+
 		id = other.id;
 		sequence = other.sequence;
 		description = other.description;
@@ -98,6 +100,8 @@ struct FastaRecord
 
 	FastaRecord& operator=(FastaRecord&& other)
 	{
+		if (this == &other) return *this;
+
 		id = other.id;
 		sequence = std::move(other.sequence);
 		description = std::move(other.description);
