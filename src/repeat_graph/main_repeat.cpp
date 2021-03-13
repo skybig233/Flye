@@ -228,7 +228,21 @@ int repeat_main(int argc, char** argv)
 	GraphProcessor proc(rg, seqAssembly);
 	OutputGenerator outGen(rg, aligner);
 
+	//revealing/masking haplotypes
+	auto markHaplotypes = [&hapResolver, isMeta]()
+	{
+		hapResolver.resetEdges();
+		hapResolver.findHeterozygousLoops();
+		hapResolver.findHeterozygousBulges();
+		if (isMeta)
+		{
+			hapResolver.findRoundabouts();
+			hapResolver.findSuperbubbles();
+		}
+	};
+
 	//dump graph before first repeat resolution iteration
+	markHaplotypes();
 	repResolver.findRepeats();
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gv");
 	//outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gfa");
@@ -250,17 +264,8 @@ int repeat_main(int argc, char** argv)
 		}
 		actions += multInf.trimTips();
 
-		//revealing/masking haplotypes
-		hapResolver.resetEdges();
-		hapResolver.findHeterozygousLoops();
-		hapResolver.findHeterozygousBulges();
-		if (isMeta)
-		{
-			hapResolver.findRoundabouts();
-			hapResolver.findSuperbubbles();
-		}
-
 		//resolving repeats
+		markHaplotypes();
 		repResolver.findRepeats();
 		actions += repResolver.resolveRepeats();
 
@@ -273,11 +278,19 @@ int repeat_main(int argc, char** argv)
 	{
 		multInf.resolveForks();
 	}
+
 	if (!keepHaplotypes)
 	{
 		hapResolver.collapseHaplotypes();
 		repResolver.resolveSimpleRepeats();
 	}
+	else
+	{
+		//if we keeping haplotypes, update them one more time to ensure it's consistent
+		//with the final graph structure
+		markHaplotypes();
+	}
+
 	multInf.removeUnsupportedEdges(/*only tips*/ true);
 
 	repResolver.findRepeats();

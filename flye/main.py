@@ -25,7 +25,7 @@ import flye.assembly.scaffolder as scf
 from flye.__version__ import __version__
 from flye.__build__ import __build__
 import flye.config.py_cfg as cfg
-from flye.config.configurator import setup_params
+from flye.config.configurator import setup_params, ConfigException
 from flye.utils.bytes2human import human2bytes, bytes2human
 from flye.utils.sam_parser import AlignmentException
 import flye.utils.fasta_parser as fp
@@ -518,6 +518,12 @@ def _run_polisher_only(args):
     logger.info("Running Flye polisher")
     logger.debug("Cmd: %s", " ".join(sys.argv))
 
+    for read_file in args.reads:
+        if not os.path.exists(read_file):
+            raise ResumeException("Can't open " + read_file)
+        if " " in read_file:
+            raise ResumeException("Path to reads contain spaces: " + read_file)
+
     pol.polish(args.polish_target, args.reads, args.out_dir,
                args.num_iters, args.threads, args.platform,
                output_progress=True)
@@ -782,6 +788,8 @@ def main():
         os.mkdir(args.out_dir)
     args.out_dir = os.path.abspath(args.out_dir)
 
+    args.reads = [os.path.abspath(r) for r in args.reads]
+
     args.log_file = os.path.join(args.out_dir, "flye.log")
     _enable_logging(args.log_file, args.debug,
                     overwrite=False)
@@ -802,7 +810,7 @@ def main():
 
     except (AlignmentException, pol.PolishException,
             asm.AssembleException, repeat.RepeatException,
-            ResumeException, fp.FastaError) as e:
+            ResumeException, fp.FastaError, ConfigException) as e:
         logger.error(e)
         logger.error("Pipeline aborted")
         return 1
