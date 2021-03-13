@@ -220,12 +220,16 @@ void Extender::assembleDisjointigs()
 	_innerReads.clear();
 	cuckoohash_map<FastaRecord::Id, size_t> coveredReads;
 	
-	int totalReads = 0;
-	for (const auto& read : _readsContainer.iterSeqs())
+	std::vector<FastaRecord::Id> allReads;
+	for (const auto& seq : _readsContainer.iterSeqs())
 	{
-		if ((int)read.sequence.length() > 
-			Parameters::get().minimumOverlap) ++totalReads;
+		if (seq.sequence.length() > (size_t)Parameters::get().minimumOverlap &&
+			seq.id.strand())
+		{
+			allReads.push_back(seq.id);
+		}
 	}
+	int totalReads = allReads.size() * 2;	//counting both strands
 	
 	std::mutex indexMutex;
 	ProgressPercent progress(totalReads);
@@ -277,18 +281,9 @@ void Extender::assembleDisjointigs()
 			//	<< " " << exInfo.leftTip << " " << exInfo.rightTip;
 			return;
 		}*/
-
-		/*if (exInfo.leftAsmOverlap + exInfo.rightAsmOverlap > 
-			exInfo.assembledLength + 2 * Parameters::get().minimumOverlap)
-		{
-			//Logger::get().debug() << "No novel sequence";
-			return;
-		}*/
-
 		
 		int innerCount = 0;
 		//do not count first and last reads - they are inner by defalut
-		assert(exInfo.reads.size() >= 4);
 		for (size_t i = 1; i < exInfo.reads.size() - 1; ++i)
 		{
 			if (_innerReads.contains(exInfo.reads[i])) ++innerCount;
@@ -332,12 +327,6 @@ void Extender::assembleDisjointigs()
 			_innerReads.insert(readId, true);
 			_innerReads.insert(readId.rc(), true);
 
-			//repetitive read - will bring to many "off-target" reads
-			//int maxExtensions = exInfo.meanOverlaps * 2;
-			//if (this->countRightExtensions(readId) > maxExtensions||
-			//	this->countRightExtensions(readId.rc()) > maxExtensions) continue;
-
-			//so each read is covered from the left and right
 			for (const auto& ovlp : IterNoOverhang(_ovlpContainer.lazySeqOverlaps(readId)))
 			{
 				if (ovlp.minRange() > _safeOverlap)
@@ -367,15 +356,7 @@ void Extender::assembleDisjointigs()
 	{
 		processRead(readId);
 	};
-	std::vector<FastaRecord::Id> allReads;
-	for (const auto& seq : _readsContainer.iterSeqs())
-	{
-		if (seq.sequence.length() > (size_t)Parameters::get().minimumOverlap &&
-			seq.id.strand())
-		{
-			allReads.push_back(seq.id);
-		}
-	}
+
 	//deterministic shuffling
 	std::sort(allReads.begin(), allReads.end(), 
 			  [](const FastaRecord::Id& id1, const FastaRecord::Id& id2)
@@ -391,7 +372,7 @@ void Extender::assembleDisjointigs()
 		for (const auto& seq : _readsContainer.iterSeqs())
 		{
 			if (seq.id.strand() && !_innerReads.contains(seq.id) &&
-				_readsContainer.seqLen(seq.id) > Parameters::get().minimumOverlap)
+				_readsContainer.seqLen(seq.id) > _safeOverlap)
 			{
 				sortedByLength.push_back(seq.id);
 			}
