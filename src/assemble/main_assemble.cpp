@@ -120,6 +120,65 @@ bool parseArgs(int argc, char** argv, std::string& readsFasta,
 	return true;
 }
 
+void removeContainedDisjointigs(std::vector<FastaRecord>& disjointigs,
+								float divergenceThreshold)
+{
+	SequenceContainer disjSequences;
+	for (auto& disj : disjointigs) disjSequences.addSequence(disj.sequence, disj.description);
+	disjSequences.buildPositionIndex();
+
+	VertexIndex vertIndex(disjSequences, (int)Config::get("assemble_kmer_sample"));
+	bool useMinimizers = Config::get("use_minimizers");
+	int minWnd = useMinimizers ? Config::get("minimizer_window") : 1;
+	vertIndex.buildIndexMinimizers(/*min freq*/ 1, minWnd);
+
+	const int FLANK = (int)Config::get("maximum_overhang");
+
+	OverlapDetector ovlp(disjSequences, vertIndex,
+						 (int)Config::get("maximum_jump"), 
+						 Parameters::get().minimumOverlap,
+						 (int)Config::get("maximum_overhang"),
+						 /*store alignment*/ false,
+						 /*only max ovlp*/ true,
+						 divergenceThreshold,
+						 (bool)Config::get("reads_base_alignment"),
+						 /*partition bad map*/ false,
+						 (bool)Config::get("hpc_scoring_on"));
+	OverlapContainer disjOverlaps(ovlp, disjSequences);
+
+	Logger::get().info() << "Filtering contained disjointigs";
+	disjOverlaps.findAllOverlaps();
+	std::unordered_set<std::string> containedDisj;
+	for (auto& seq : disjSequences.iterSeqs())
+	{
+		for (auto& ovlp : disjOverlaps.lazySeqOverlaps(seq.id))
+		{
+			//Logger::get().debug() << disjSequences.seqName(ovlp.curId) << " " << ovlp.curLen << " " <<
+			//	ovlp.curBegin << " " << ovlp.curEnd << " " << disjSequences.seqName(ovlp.extId)
+			//	<< " " << ovlp.extLen << " " << ovlp.extBegin << " " << ovlp.extEnd;
+
+			bool contained = (std::max(ovlp.curBegin, ovlp.curLen - ovlp.curEnd) < FLANK) ||
+							 (std::max(ovlp.extBegin, ovlp.extLen - ovlp.extEnd) < FLANK);
+			if (contained)
+			{
+				FastaRecord::Id contId = ovlp.curLen < ovlp.extLen ? ovlp.curId : ovlp.extId;
+				containedDisj.insert(disjSequences.seqName(contId).substr(1));
+			}
+		}
+	}
+	Logger::get().info() << "Contained seqs: " << containedDisj.size();
+
+	std::vector<FastaRecord> newDisj;
+	for (auto& disj : disjointigs)
+	{
+		if (!containedDisj.count(disj.description))
+		{
+			newDisj.push_back(disj);
+		}
+	}
+	newDisj.swap(disjointigs);
+}
+
 int assemble_main(int argc, char** argv)
 {
 	#ifdef NDEBUG
@@ -248,6 +307,7 @@ int assemble_main(int argc, char** argv)
 	ConsensusGenerator consGen;
 	auto disjointigsFasta = 
 		consGen.generateConsensuses(extender.getDisjointigPaths());
+	removeContainedDisjointigs(disjointigsFasta, readOverlaps.getDivergenceThreshold());
 	SequenceContainer::writeFasta(disjointigsFasta, outAssembly);
 
 	Logger::get().debug() << "Peak RAM usage: " 

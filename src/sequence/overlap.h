@@ -420,6 +420,8 @@ public:
 
 	void setDivergenceThreshold(float threshold, bool isRelative);
 
+	float getDivergenceThreshold() {return _ovlpDetect._maxDivergence;}
+
 	//The functions below are NOT thread safe.
 	//Do not mix them with any other functions
 
