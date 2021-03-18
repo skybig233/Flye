@@ -304,7 +304,7 @@ void Extender::assembleDisjointigs()
 		//Good to go!
 		ExtensionInfo exInfo = this->extendDisjointig(startRead);
 
-		auto innerReadsPrecise = this->getInnerReads(exInfo);
+		//auto innerReadsPrecise = this->getInnerReadsPrecise(exInfo);
 
 		//Exclusive part - updating the overall assembly
 		std::lock_guard<std::mutex> guard(indexMutex);
@@ -362,16 +362,17 @@ void Extender::assembleDisjointigs()
 
 			for (const auto& ovlp : IterNoOverhang(_ovlpContainer.lazySeqOverlaps(readId)))
 			{
+				allOverlaps.push_back(ovlp);
 				if (ovlp.minRange() > _safeOverlap)
 				{
-					allOverlaps.push_back(ovlp);
 					coveredReads.insert(ovlp.extId, true);
 					coveredReads.insert(ovlp.extId.rc(), true);
 				}
 			}
 		}
 
-		for (const auto& read : innerReadsPrecise)
+		auto innerReads = this->getInnerReads(allOverlaps);
+		for (const auto& read : innerReads)
 		{
 			_innerReads.insert(read, true);
 			_innerReads.insert(read.rc(), true);
@@ -446,8 +447,8 @@ void Extender::assembleDisjointigs()
 }
 
 
-std::vector<FastaRecord::Id> 
-	Extender::getInnerReads(const ExtensionInfo& exInfo)
+/*std::vector<FastaRecord::Id> 
+	Extender::getInnerReadsPrecise(const ExtensionInfo& exInfo)
 {
 	//first, generate disjointig sequence
 	std::string disjSequence;
@@ -496,11 +497,11 @@ std::vector<FastaRecord::Id>
 		}
 	}
 	return innerReads;
-}
+}*/
 
 
 std::vector<FastaRecord::Id> 
-	Extender::getInnerReadsFast(const std::vector<OverlapRange>& ovlps)
+	Extender::getInnerReads(const std::vector<OverlapRange>& ovlps)
 {
 	static const int WINDOW = Config::get("chimera_window");
 	static const int OVERHANG = Config::get("maximum_overhang");
