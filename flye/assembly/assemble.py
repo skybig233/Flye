@@ -55,9 +55,8 @@ def assemble(args, run_params, out_file, log_file, config_path):
     if run_params["min_read_length"] > 0:
         cmdline.extend(["--min-read", str(run_params["min_read_length"])])
 
-    if args.hifi_error:
-        cmdline.extend(["--extra-params",
-                        "assemble_ovlp_divergence={}".format(args.hifi_error)])
+    if args.extra_params:
+        cmdline.extend(["--extra-params", args.extra_params])
 
     #if args.min_kmer_count is not None:
     #    cmdline.extend(["-m", str(args.min_kmer_count)])

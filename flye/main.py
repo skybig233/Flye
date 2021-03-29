@@ -620,7 +620,7 @@ def _usage():
             "\t     [--meta] [--plasmids] [--trestle] [--polish-target]\n"
             "\t     [--keep-haplotypes] [--debug] [--version] [--help] \n"
             "\t     [--resume] [--resume-from] [--stop-after] \n"
-            "\t     [--hifi-error] [--min-overlap SIZE]")
+            "\t     [--hifi-error float] [--extra-params] [--min-overlap SIZE]")
 
 
 def _epilog():
@@ -715,6 +715,9 @@ def main():
     parser.add_argument("--hifi-error", dest="hifi_error", metavar="float",
                         default=None, help="expected HiFi reads error rate (e.g. 0.01 or 0.001)"
                         " [0.01]", type=float)
+    parser.add_argument("--extra-params", dest="extra_params",
+                        metavar="extra_params", required=False, default=None,
+                        help="extra configuration parameters list (comma-separated)")
     parser.add_argument("--plasmids", action="store_true",
                         dest="plasmids", default=False,
                         help="rescue short unassembled plasmids")
@@ -754,6 +757,13 @@ def main():
 
     if args.hifi_error and not args.pacbio_hifi:
         parser.error("--hifi-error can only be used with --pacbio-hifi")
+
+    if args.hifi_error:
+        hifi_str = "assemble_ovlp_divergence={0},repeat_graph_ovlp_divergence={0}".format(args.hifi_error)
+        if args.extra_params:
+            args.extra_params += "," + hifi_str
+        else:
+            args.extra_params = hifi_str
 
     #if not args.genome_size and not args.polish_target:
     #    parser.error("Genome size argument (-g/--genome-size) "

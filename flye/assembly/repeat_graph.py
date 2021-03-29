@@ -53,9 +53,8 @@ def analyse_repeats(args, run_params, input_assembly, out_folder,
     #    cmdline.extend(["--kmer", str(args.kmer_size)])
     cmdline.extend(["--min-ovlp", str(run_params["min_overlap"])])
 
-    if args.hifi_error:
-        cmdline.extend(["--extra-params",
-                        "repeat_graph_ovlp_divergence={}".format(args.hifi_error)])
+    if args.extra_params:
+        cmdline.extend(["--extra-params", args.extra_params])
 
     try:
         logger.debug("Running: " + " ".join(cmdline))
@@ -84,6 +83,9 @@ def generate_contigs(args, run_params, graph_edges, out_folder,
     #if args.kmer_size:
     #    cmdline.extend(["--kmer", str(args.kmer_size)])
     cmdline.extend(["--min-ovlp", str(run_params["min_overlap"])])
+
+    if args.extra_params:
+        cmdline.extend(["--extra-params", args.extra_params])
 
     try:
         logger.debug("Running: " + " ".join(cmdline))
