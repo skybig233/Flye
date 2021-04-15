@@ -309,6 +309,25 @@ std::vector<ContigExtender::UpathAlignment>
 	return upathAln;
 }
 
+void ContigExtender::appendGfaPaths(const std::string& filename)
+{
+	std::ofstream fout(filename, std::ios::app);
+	if (!fout) throw std::runtime_error("Can't write " + filename);
+
+	for (auto& ctg : _contigs)
+	{
+		std::string pathStr;
+		for (auto& upath : ctg.graphPaths)
+		{
+			int edgeId = upath->id.signedId();
+			char sign = "-+"[edgeId > 0];
+			pathStr +=  upath->nameUnsigned() + sign + ",";
+		}
+		pathStr.pop_back();
+		fout << "P\t" << ctg.graphEdges.name() << "\t" << pathStr << "\t*\n";
+	}
+}
+
 void ContigExtender::outputStatsTable(const std::string& filename)
 {
 	std::ofstream fout(filename);

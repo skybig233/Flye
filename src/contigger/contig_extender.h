@@ -24,6 +24,7 @@ public:
 	void outputContigs(const std::string& filename);
 	void outputStatsTable(const std::string& filename);
 	void outputScaffoldConnections(const std::string& filename);
+	void appendGfaPaths(const std::string& filename);
 	//std::vector<UnbranchingPath> getContigPaths();
 
 	const std::vector<UnbranchingPath>& getUnbranchingPaths() 
