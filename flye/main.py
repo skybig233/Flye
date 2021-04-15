@@ -373,7 +373,7 @@ class JobPolishing(Job):
         pol.generate_polished_edges(self.in_graph_edges, self.in_graph_gfa,
                                     self.out_files["contigs"],
                                     self.polishing_dir, self.args.platform,
-                                    self.args.threads)
+                                    stats, self.args.threads)
         os.remove(contigs)
 
 
