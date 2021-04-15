@@ -139,6 +139,7 @@ void OutputGenerator::outputGfa(const std::vector<UnbranchingPath>& paths,
 					leftSign.c_str(), rightName.c_str(), rightSign.c_str());
 		}
 	}
+	fclose(fout);
 }
 
 void OutputGenerator::outputGfaCompact(const std::vector<UnbranchingPath>& paths,

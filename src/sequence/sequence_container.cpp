@@ -354,6 +354,7 @@ void SequenceContainer::writeFasta(const std::vector<FastaRecord>& records,
 		fwrite(contigSeq.data(), sizeof(contigSeq.data()[0]), 
 			   contigSeq.size(), fout);
 	}
+	fclose(fout);
 }
 
 void SequenceContainer::buildPositionIndex()
