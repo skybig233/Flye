@@ -139,9 +139,10 @@ void OutputGenerator::outputGfa(const std::vector<UnbranchingPath>& paths,
 					leftSign.c_str(), rightName.c_str(), rightSign.c_str());
 		}
 	}
+	fclose(fout);
 }
 
-void OutputGenerator::outputGfaCompact(const std::vector<UnbranchingPath>& paths,
+/*void OutputGenerator::outputGfaCompact(const std::vector<UnbranchingPath>& paths,
 							    	   const std::string& filename)
 {
 	auto sequences = this->generatePathSequences(paths);
@@ -211,7 +212,7 @@ void OutputGenerator::outputGfaCompact(const std::vector<UnbranchingPath>& paths
 					ctgSign.c_str(), nodeId.c_str(), nodeSign.c_str());
 		}
 	}
-}
+}*/
 
 void OutputGenerator::outputDot(const std::vector<UnbranchingPath>& paths,
 								const std::string& filename)

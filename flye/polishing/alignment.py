@@ -108,49 +108,80 @@ def get_uniform_alignments(alignments, seq_len):
             mid2 = sorted_list[(len(lst) // 2)]
             return (mid1 + mid2) / 2
 
-    WINDOW = 100
-    MIN_COV = 10
-    COV_RATE = 1.25
+    WINDOW = 500
+    MIN_COV = 5
+    GOOD_RATE = 0.66
 
+    ctg_id = alignments[0].trg_id
     #split contig into windows, get median read coverage over all windows and
     #determine the quality threshold cutoffs for each window
     wnd_primary_cov = [0 for _ in range(seq_len // WINDOW + 1)]
-    wnd_aln_quality = [[] for _ in range(seq_len // WINDOW + 1)]
-    wnd_qual_thresholds = [1.0 for _ in range(seq_len // WINDOW + 1)]
+    wnd_all_cov = [0 for _ in range(seq_len // WINDOW + 1)]
+
     for aln in alignments:
-        for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW):
+        for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW + 1):
             if not aln.is_secondary:
                 wnd_primary_cov[i] += 1
-            wnd_aln_quality[i].append(aln.err_rate)
+            wnd_all_cov[i] += 1
 
-    #for each window, select top X alignmetns, where X is the median read coverage
-    cov_threshold = max(int(COV_RATE * _get_median(wnd_primary_cov)), MIN_COV)
-    for i in range(len(wnd_aln_quality)):
-        if len(wnd_aln_quality[i]) > cov_threshold:
-            wnd_qual_thresholds[i] = sorted(wnd_aln_quality[i])[cov_threshold]
+    cov_threshold = max(int(_get_median(wnd_primary_cov)), MIN_COV)
 
-    #for each alignment, count in how many windows it passes the threshold
-    filtered_alignments = []
-    total_sequence = 0
-    filtered_sequence = 0
+    selected_alignments = []
+    original_sequence = 0
+    primary_sequence = 0
+    secondary_sequence = 0
+    primary_aln = 0
+    secondary_aln = 0
+
+    def _aln_score(aln):
+        wnd_good = 0
+        wnd_bad = 0
+        for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW + 1):
+            if wnd_primary_cov[i] < cov_threshold:
+                wnd_good += 1
+            else:
+                wnd_bad += 1
+        return wnd_good, wnd_bad
+
+    sec_aln_scores = {}
     for aln in alignments:
-        good_windows = 0
-        total_windows = aln.trg_end // WINDOW - aln.trg_start // WINDOW
-        total_sequence += aln.trg_end - aln.trg_start
-        for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW):
-            if aln.err_rate <= wnd_qual_thresholds[i]:
-                good_windows += 1
+        original_sequence += aln.trg_end - aln.trg_start
+        #always keep primary alignments, regardless of local coverage
+        if not aln.is_secondary:
+            primary_sequence += aln.trg_end - aln.trg_start
+            primary_aln += 1
+            selected_alignments.append(aln)
+            continue
 
-        if good_windows > total_windows // 2:
-            filtered_alignments.append(aln)
-            filtered_sequence += aln.trg_end - aln.trg_start
+        #if alignment is secondary, count how many windows it helps to improve
+        wnd_good, wnd_bad = _aln_score(aln)
+        sec_aln_scores[aln.qry_id] = (wnd_good, wnd_bad, aln)
 
-    #filtered_reads_rate = 1 - float(len(filtered_alignments)) / len(alignments)
-    #filtered_seq_rate = 1 - float(filtered_sequence) / total_sequence
-    #logger.debug("Filtered {0:7.2f}% reads, {1:7.2f}% sequence"
-    #                .format(filtered_reads_rate * 100, filtered_seq_rate * 100))
+    #logger.debug("Seq: {0} pri_cov: {1} all_cov: {2}".format(ctg_id, _get_median(wnd_primary_cov),
+    #                                                         _get_median(wnd_all_cov)))
 
-    return filtered_alignments
+    #now, greedily add secondaty alignments, until they add useful coverage
+    sorted_sec_aln = [x for x in sorted(sec_aln_scores, reverse=True,
+                                        key=lambda a: sec_aln_scores[a][0] - 2 * sec_aln_scores[a][1])]
+    for aln_id in sorted_sec_aln:
+        aln = sec_aln_scores[aln_id][2]
+        #recompute scores
+        wnd_good, wnd_bad = _aln_score(aln)
+        to_take = wnd_good / (wnd_good + wnd_bad) > GOOD_RATE
+        if to_take:
+            selected_alignments.append(aln)
+            secondary_aln += 1
+            secondary_sequence += aln.trg_end - aln.trg_start
+            for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW + 1):
+                wnd_primary_cov[i] += 1
+
+        #logger.debug("\tSec score: {} {} {} {}".format(aln_id, wnd_good, wnd_bad, to_take))
+
+    #logger.debug("Original seq: {0}, reads: {1}".format(original_sequence, len(alignments)))
+    #logger.debug("Primary seq: {0}, reads: {1}".format(primary_sequence, primary_aln))
+    #logger.debug("Secondary seq: {0}, reads: {1}".format(secondary_sequence, secondary_aln))
+
+    return selected_alignments
 
 
 def split_into_chunks(fasta_in, chunk_size):

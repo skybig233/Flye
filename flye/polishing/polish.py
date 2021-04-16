@@ -140,12 +140,21 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
 
 
 def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
-                            error_mode, num_threads):
+                            error_mode, polished_stats, num_threads):
     """
     Generate polished graph edges sequences by extracting them from
     polished contigs
     """
     logger.debug("Generating polished GFA")
+
+    edges_new_coverage = {}
+    with open(polished_stats, "r") as f:
+        for line in f:
+            if line.startswith("#"):
+                continue
+            ctg, _len, coverage = line.strip().split()
+            ctg_id = ctg.split("_")[1]
+            edges_new_coverage[ctg_id] = int(coverage)
 
     alignment_file = os.path.join(work_dir, "edges_aln.bam")
     polished_dict = fp.read_sequence_dict(polished_contigs)
@@ -197,6 +206,10 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
             if line.startswith("S"):
                 seq_id = line.split()[1]
                 coverage_tag = line.split()[3]
+                seq_num = seq_id.split("_")[1]
+                if seq_num in edges_new_coverage:
+                    #logger.info("from {0} to {1}".format(coverage_tag, edges_new_coverage[seq_num]))
+                    coverage_tag = "dp:i:{0}".format(edges_new_coverage[seq_num])
                 gfa_polished.write("S\t{0}\t{1}\t{2}\n"
                                     .format(seq_id, edges_dict[seq_id], coverage_tag))
             else:
