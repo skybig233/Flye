@@ -161,8 +161,9 @@ def get_uniform_alignments(alignments, seq_len):
     #                                                         _get_median(wnd_all_cov)))
 
     #now, greedily add secondaty alignments, until they add useful coverage
-    sorted_sec_aln = [x for x in sorted(sec_aln_scores, reverse=True,
-                                        key=lambda a: sec_aln_scores[a][0] - 2 * sec_aln_scores[a][1])]
+    _score_fun = lambda x: (sec_aln_scores[x][0] - 2 * sec_aln_scores[x][1],
+                            sec_aln_scores[x][2].trg_end - sec_aln_scores[x][2].trg_start)
+    sorted_sec_aln = [x for x in sorted(sec_aln_scores, reverse=True, key=_score_fun)]
     for aln_id in sorted_sec_aln:
         aln = sec_aln_scores[aln_id][2]
         #recompute scores
