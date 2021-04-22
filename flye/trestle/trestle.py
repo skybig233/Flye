@@ -1152,8 +1152,8 @@ def _read_alignment(alignment, target_path, min_aln_rate):
                                        config.vals["max_read_coverage"])
     while not aln_reader.is_eof():
         ctg_id, ctg_aln = aln_reader.get_chunk()
-        if ctg_id is None:
-            break
+        if ctg_id is None or len(ctg_aln) == 0:
+            continue
         alignments.append(ctg_aln)
     aln_reader.close()
 

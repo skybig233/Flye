@@ -112,6 +112,9 @@ def get_uniform_alignments(alignments, seq_len):
     MIN_COV = 5
     GOOD_RATE = 0.66
 
+    if not alignments:
+        return []
+
     ctg_id = alignments[0].trg_id
     #split contig into windows, get median read coverage over all windows and
     #determine the quality threshold cutoffs for each window
@@ -270,13 +273,13 @@ def _run_minimap(reference_file, reads_files, num_proc, mode, out_file,
     #logger.debug("Running: " + " ".join(cmdline))
     try:
         devnull = open(os.devnull, "wb")
-        #env = os.environ.copy()
-        #env["LC_ALL"] = "C"
         subprocess.check_call(["/bin/bash", "-c",
                               "set -eo pipefail; " + " ".join(cmdline)],
                               stderr=open(stderr_file, "w"),
                               stdout=open(out_file, "w"))
-        os.remove(stderr_file)
+        if sam_output:
+            subprocess.check_call(SAMTOOLS_BIN + " index " + "'" + out_file + "'", shell=True)
+        #os.remove(stderr_file)
 
     except (subprocess.CalledProcessError, OSError) as e:
         logger.error("Error running minimap2, terminating. See the alignment error log "

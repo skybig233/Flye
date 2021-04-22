@@ -38,8 +38,8 @@ def _thread_worker(aln_reader, contigs_info, platform, results_queue,
     try:
         while not aln_reader.is_eof():
             ctg_id, ctg_aln = aln_reader.get_chunk()
-            if ctg_id is None:
-                break
+            if ctg_id is None or len(ctg_aln) == 0:
+                continue
 
             profile, aln_errors = _contig_profile(ctg_aln, platform,
                                                   contigs_info[ctg_id].length)

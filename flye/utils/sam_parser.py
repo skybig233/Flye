@@ -134,125 +134,22 @@ class SynchronizedSamReader(object):
         self.aln_path = sam_alignment
         self.ref_fasta = {_BYTES(h) : _BYTES(s)
                           for (h, s) in iteritems(reference_fasta)}
-        self.change_strand = True
+        self.fetch_list = [k for k in self.ref_fasta.keys()]
         self.max_coverage = max_coverage
         self.use_secondary = use_secondary
         self.cigar_parser = re.compile(b"[0-9]+[MIDNSHP=X]")
 
         #will be shared between processes
         self.shared_manager = multiprocessing.Manager()
-        self.shared_reader_queue = self.shared_manager.Queue()
         self.shared_num_jobs = multiprocessing.Value(ctypes.c_int, 0)
         self.shared_lock = self.shared_manager.Lock()
         self.shared_eof = multiprocessing.Value(ctypes.c_bool, False)
 
-        #specific to IO thread
-        self.io_thread = None
-        self.terminate_flag = False
-        self.processed_contigs = set()
-        self.chunk_buffer = []
-        self.current_contig = None
-
-        #start IO thread
-        self.io_thread = \
-                multiprocessing.Process(target=SynchronizedSamReader._io_thread_worker,
-                                        args=(self,))
-        self.io_thread.start()
-        #print("Init IO thread")
+        if len(self.fetch_list) == 0:
+            self.shared_eof.value = True
 
     def close(self):
-        self.terminate_flag = True
-        self.io_thread.join()
-        #print("Close IO thread")
-
-    def _read_file_chunk(self, aln_file):
-        """
-        Reads a chunk for a single contig. Assuming it it only
-        run in single (and same) thread, and synchonized outside
-        """
-        parsed_contig = None
-        chunk_to_return = []
-        for line in aln_file:
-            if not line:
-                break
-
-            if _is_sam_header(line): continue
-
-            tab_1 = line.find(b"\t")
-            tab_2 = line.find(b"\t", tab_1 + 1)
-            tab_3 = line.find(b"\t", tab_2 + 1)
-            if tab_2 == -1 or tab_3 == -1:
-                #raise AlignmentException("Error reading SAM file")
-                continue
-
-            read_contig = line[tab_2 + 1 : tab_3]
-            if read_contig in self.processed_contigs:
-                raise AlignmentException("Alignment file is not sorted")
-
-            if read_contig != self.current_contig:
-                prev_contig = self.current_contig
-                self.current_contig = read_contig
-
-                if prev_contig is not None:
-                    self.processed_contigs.add(prev_contig)
-                    parsed_contig = prev_contig
-                    chunk_to_return = self.chunk_buffer
-                    self.chunk_buffer = [line]
-                    break
-                else:
-                    self.chunk_buffer = [line]
-            else:
-                self.chunk_buffer.append(line)
-
-        #hit end of file
-        if not parsed_contig and self.chunk_buffer:
-            parsed_contig = self.current_contig
-            chunk_to_return = self.chunk_buffer
-            self.chunk_buffer = []
-
-        return parsed_contig, chunk_to_return
-
-    def _io_thread_worker(self):
-        """
-        This function reads the SAM file in a separate thread as needed.
-        """
-        PRE_READ = 30
-        sam_eof = False
-
-        if self.aln_path.endswith(".gz"):
-            gz = gzip.open(self.aln_path, "rb")
-            aln_file = io.BufferedReader(gz)
-        elif self.aln_path.endswith(".bam"):
-            aln_file = subprocess.Popen(SAMTOOLS_BIN + " view -@4 '" + self.aln_path + "'",
-                                        shell=True, stdout=subprocess.PIPE).stdout
-        else:
-            aln_file = open(self.aln_path, "rb")
-
-        while True:
-            if self.terminate_flag:
-                return
-
-            #reached EOF and everything was read from the queue
-            if sam_eof and self.shared_num_jobs.value == 0:
-                self.shared_eof.value = True
-                #print("IO thread: finished")
-                return
-
-            if not sam_eof and self.shared_num_jobs.value < PRE_READ:
-                #with self.shared_ctx.lock:
-                #print("IO thread: Q size: ", self.shared_ctx.reader_queue.qsize())
-                ctg_id, chunk = self._read_file_chunk(aln_file)
-                if ctg_id is not None:
-                    with self.shared_lock:
-                        self.shared_reader_queue.put(ctg_id)
-                        for line in chunk:
-                            self.shared_reader_queue.put(line)
-                        self.shared_reader_queue.put(None)
-                        self.shared_num_jobs.value += 1
-                else:
-                    sam_eof = True
-
-            time.sleep(0.01)
+        pass
 
     def is_eof(self):
         return self.shared_eof.value
@@ -326,25 +223,27 @@ class SynchronizedSamReader(object):
         """
         Gets a chunk - safe to use from multiple processes in parallel
         """
-        #fetching data from the IO thread
-        parsed_contig = None
-        chunk_buffer = None
+        ###
+        job_id = None
         while True:
             with self.shared_lock:
                 if self.shared_eof.value:
                     return None, []
-                if self.shared_num_jobs.value > 0:
-                    parsed_contig = self.shared_reader_queue.get()
-                    chunk_buffer = []
-                    while True:
-                        line = self.shared_reader_queue.get()
-                        if line is not None:
-                            chunk_buffer.append(line)
-                        else:
-                            break
-                    self.shared_num_jobs.value -= 1
-                    break
+
+                job_id = self.shared_num_jobs.value
+                self.shared_num_jobs.value = self.shared_num_jobs.value + 1
+                if self.shared_num_jobs.value == len(self.fetch_list):
+                    self.shared_eof.value = True
+                break
+
             time.sleep(0.01)
+
+        parsed_contig = self.fetch_list[job_id]
+        chunk_buffer = []
+        aln_file = subprocess.Popen(SAMTOOLS_BIN + " view '" + self.aln_path + "' '" + _STR(parsed_contig) + "'",
+                                    shell=True, stdout=subprocess.PIPE).stdout
+        for line in aln_file:
+            chunk_buffer.append(line)
         ###
 
         #shuffle alignments so that they uniformly distributed. Use same seed for determinism
@@ -402,94 +301,6 @@ class SynchronizedSamReader(object):
         if parsed_contig is None:
             return None, []
         return _STR(parsed_contig), alignments
-
-"""
-def preprocess_sam(sam_file, work_dir):
-    #Proprocesses minimap2 output by adding SEQ
-    #to secondary alignments, removing
-    #unaligned reads and then sorting
-    #file by reference sequence id
-    expanded_sam = sam_file + "_expanded"
-    merged_file = sam_file + "_merged"
-    sorted_file = sam_file + "_sorted"
-
-    #puting SAM headers to the final postprocessed file first
-    with open(sam_file, "rb") as hdr_in, open(merged_file, "wb") as fout:
-        for line in hdr_in:
-            if not _is_sam_header(line):
-                break
-            fout.write(line)
-
-    #adding SEQ fields to secondary alignments 
-    with open(sam_file, "rb") as fin, open(expanded_sam, "wb") as fout:
-        prev_id = None
-        prev_seq = None
-        primary_reversed = None
-        for line in fin:
-            if _is_sam_header(line):
-                continue
-
-            tokens = line.strip().split()
-            flags = int(tokens[1])
-            is_unmapped = flags & 0x4
-            is_secondary = flags & 0x100
-            is_supplementary = flags & 0x800
-            is_reversed = flags & 0x16
-
-            if is_unmapped:
-                continue
-
-            read_id, cigar_str, read_seq = tokens[0], tokens[5], tokens[9]
-            has_hard_clipped = b"H" in cigar_str
-
-            #Checking format assumptions
-            if has_hard_clipped:
-                if is_secondary:
-                    raise Exception("Secondary alignment with hard-clipped bases")
-                if not is_supplementary:
-                    raise Exception("Primary alignment with hard-clipped bases")
-            if not is_secondary and read_seq == b"*":
-                raise Exception("Missing SEQ for non-secondary alignment")
-
-            if read_seq == b"*":
-                if read_id != prev_id:
-                    raise Exception("SAM file is not sorted by read names")
-                if is_reversed == primary_reversed:
-                    tokens[9] = prev_seq
-                else:
-                    tokens[9] = fp.reverse_complement_bytes(prev_seq)
-
-            #Assuming that the first read alignmnent in SAM is primary
-            elif prev_id != read_id:
-                if has_hard_clipped:
-                    raise Exception("Hard clipped bases in the primamry read")
-                prev_id = read_id
-                prev_seq = read_seq
-                primary_reversed = is_reversed
-
-            fout.write(b"\t".join(tokens) + b"\n")
-
-    #don't need the original SAM anymore, cleaning up space
-    os.remove(sam_file)
-
-    #logger.debug("Sorting alignment file")
-    env = os.environ.copy()
-    env["LC_ALL"] = "C"
-    subprocess.check_call(["sort", "-k", "3,3", "-T", work_dir, expanded_sam],
-                          stdout=open(sorted_file, "wb"), env=env)
-
-    #don't need the expanded file anymore
-    os.remove(expanded_sam)
-
-    #appending to the final file, that already contains headers
-    with open(sorted_file, "rb") as sort_in, open(merged_file, "ab") as fout:
-        for line in sort_in:
-            if not _is_sam_header(line):
-                fout.write(line)
-
-    os.remove(sorted_file)
-    os.rename(merged_file, sam_file)
-"""
 
 
 def _is_sam_header(line):

@@ -57,8 +57,8 @@ def _thread_worker(aln_reader, contigs_info, err_mode,
     try:
         while not aln_reader.is_eof():
             ctg_id, ctg_aln = aln_reader.get_chunk()
-            if ctg_id is None:
-                break
+            if ctg_id is None or len(ctg_aln) == 0:
+                continue
 
             #logger.debug("Processing {0}".format(ctg_id))
             #get top unifom alignments
