@@ -188,9 +188,9 @@ def get_uniform_alignments(alignments, seq_len):
     return selected_alignments
 
 
-def split_into_chunks(fasta_in, chunk_size):
+def split_into_chunks(fasta_in, chunk_size, fasta_out):
     out_dict = {}
-    for header, seq in iteritems(fasta_in):
+    for header, seq in fp.stream_sequence(fasta_in):
         #print len(seq)
         for i in range(0, max(len(seq) // chunk_size, 1)):
             chunk_hdr = "{0}$chunk_{1}".format(header, i)
@@ -202,7 +202,7 @@ def split_into_chunks(fasta_in, chunk_size):
             #print(start, end)
             out_dict[chunk_hdr] = seq[start : end]
 
-    return out_dict
+    fp.write_fasta_dict(out_dict, fasta_out)
 
 
 def merge_chunks(fasta_in, fold_function=lambda l: "".join(l)):

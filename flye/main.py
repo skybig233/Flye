@@ -313,9 +313,7 @@ class JobConsensus(Job):
         #split into 1Mb chunks to reduce RAM usage
         CHUNK_SIZE = 1000000
         chunks_file = os.path.join(self.consensus_dir, "chunks.fasta")
-        chunks = aln.split_into_chunks(fp.read_sequence_dict(self.in_contigs),
-                                       CHUNK_SIZE)
-        fp.write_fasta_dict(chunks, chunks_file)
+        chunks = aln.split_into_chunks(self.in_contigs, CHUNK_SIZE, chunks_file)
 
         logger.info("Running Minimap2")
         out_alignment = os.path.join(self.consensus_dir, "minimap.bam")

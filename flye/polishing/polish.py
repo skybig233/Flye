@@ -73,9 +73,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
         #slightly vary chunk size between iterations
         CHUNK_SIZE = 1000000 - (i % 2) * 100000
         chunks_file = os.path.join(work_dir, "chunks_{0}.fasta".format(i + 1))
-        chunks = split_into_chunks(fp.read_sequence_dict(prev_assembly),
-                                       CHUNK_SIZE)
-        fp.write_fasta_dict(chunks, chunks_file)
+        split_into_chunks(prev_assembly, CHUNK_SIZE, chunks_file)
 
         ####
         logger.info("Running minimap2")

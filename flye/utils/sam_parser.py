@@ -132,9 +132,9 @@ class SynchronizedSamReader(object):
 
         #will not be changed during exceution, each process has its own copy
         self.aln_path = sam_alignment
-        self.ref_fasta = {_BYTES(h) : _BYTES(s)
-                          for (h, s) in iteritems(reference_fasta)}
-        self.fetch_list = [k for k in self.ref_fasta.keys()]
+        #self.ref_fasta = {_BYTES(h) : _BYTES(s)
+        #                  for (h, s) in iteritems(reference_fasta)}
+        self.fetch_list = [_BYTES(k) for k in reference_fasta.keys()]
         self.max_coverage = max_coverage
         self.use_secondary = use_secondary
         self.cigar_parser = re.compile(b"[0-9]+[MIDNSHP=X]")
@@ -145,6 +145,10 @@ class SynchronizedSamReader(object):
         self.shared_lock = self.shared_manager.Lock()
         self.shared_eof = multiprocessing.Value(ctypes.c_bool, False)
 
+        self.ref_fasta = self.shared_manager.dict()
+        for (h, s) in iteritems(reference_fasta):
+            self.ref_fasta[_BYTES(h)] = _BYTES(s)
+
         if len(self.fetch_list) == 0:
             self.shared_eof.value = True
 
@@ -154,8 +158,8 @@ class SynchronizedSamReader(object):
     def is_eof(self):
         return self.shared_eof.value
 
-    def _parse_cigar(self, cigar_str, read_str, ctg_name, ctg_pos):
-        ctg_str = self.ref_fasta[ctg_name]
+    def _parse_cigar(self, cigar_str, read_str, ctg_str, ctg_pos):
+        #ctg_str = self.ref_fasta[ctg_name]
         trg_seq = []
         qry_seq = []
         trg_start = ctg_pos - 1
@@ -239,6 +243,7 @@ class SynchronizedSamReader(object):
             time.sleep(0.01)
 
         parsed_contig = self.fetch_list[job_id]
+        contig_str = self.ref_fasta[parsed_contig]
         chunk_buffer = []
         aln_file = subprocess.Popen(SAMTOOLS_BIN + " view '" + self.aln_path + "' '" + _STR(parsed_contig) + "'",
                                     shell=True, stdout=subprocess.PIPE).stdout
@@ -246,7 +251,8 @@ class SynchronizedSamReader(object):
             chunk_buffer.append(line)
         ###
 
-        #shuffle alignments so that they uniformly distributed. Use same seed for determinism
+        #shuffle alignments so that they uniformly distributed. Needed for
+        #max_coverage subsampling. Using the same seed for determinism
         random.Random(42).shuffle(chunk_buffer)
 
         sequence_length = 0
@@ -266,7 +272,7 @@ class SynchronizedSamReader(object):
             if is_secondary and not self.use_secondary: continue
 
             read_id = tokens[0]
-            read_contig = tokens[2]
+            #read_contig = tokens[2]
             cigar_str = tokens[5]
             read_str = tokens[9]
             ctg_pos = int(tokens[3])
@@ -278,12 +284,12 @@ class SynchronizedSamReader(object):
 
             (trg_start, trg_end, trg_len, trg_seq,
             qry_start, qry_end, qry_len, qry_seq, err_rate) = \
-                    self._parse_cigar(cigar_str, read_str, read_contig, ctg_pos)
+                    self._parse_cigar(cigar_str, read_str, contig_str, ctg_pos)
 
             #OVERHANG = cfg.vals["read_aln_overhang"]
             #if (float(qry_end - qry_start) / qry_len > self.min_aln_rate or
             #        trg_start < OVERHANG or trg_len - trg_end < OVERHANG):
-            aln = Alignment(_STR(read_id), _STR(read_contig),
+            aln = Alignment(_STR(read_id), _STR(parsed_contig),
                             qry_start, qry_end, "-" if is_reversed else "+", qry_len,
                             trg_start, trg_end, "+", trg_len,
                             _STR(qry_seq), _STR(trg_seq),
@@ -291,15 +297,14 @@ class SynchronizedSamReader(object):
             alignments.append(aln)
 
             sequence_length += qry_end - qry_start
-            contig_length = len(self.ref_fasta[parsed_contig])
-            if sequence_length // contig_length > self.max_coverage:
+            if sequence_length // len(contig_str) > self.max_coverage:
                 break
 
         #then, alignments by read and by score
         alignments.sort(key=lambda a: (a.qry_id, -(a.qry_end - a.qry_start)))
 
-        if parsed_contig is None:
-            return None, []
+        #if parsed_contig is None:
+        #    return None, []
         return _STR(parsed_contig), alignments
 
 
