@@ -92,7 +92,7 @@ def shift_gaps(seq_trg, seq_qry):
     return "".join(lst_qry[1 : -1])
 
 
-def get_uniform_alignments(alignments, seq_len):
+def get_uniform_alignments(alignments):
     """
     Leaves top alignments for each position within contig
     assuming uniform coverage distribution
@@ -115,7 +115,9 @@ def get_uniform_alignments(alignments, seq_len):
     if not alignments:
         return []
 
+    seq_len = alignments[0].trg_len
     ctg_id = alignments[0].trg_id
+
     #split contig into windows, get median read coverage over all windows and
     #determine the quality threshold cutoffs for each window
     wnd_primary_cov = [0 for _ in range(seq_len // WINDOW + 1)]

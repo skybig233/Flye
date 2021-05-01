@@ -4,6 +4,9 @@
 
 from __future__ import absolute_import
 import os
+import signal
+import multiprocessing
+
 
 def which(program):
     """
@@ -24,3 +27,30 @@ def which(program):
                 return exe_file
 
     return None
+
+
+def process_in_parallel(function, arguments, num_proc):
+    """
+    Run given function in parallel using multithreading
+    """
+    #making sure the main process catches SIGINT
+    threads = []
+    orig_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    for _ in range(num_proc):
+        threads.append(multiprocessing.Process(target=function, args=arguments))
+    signal.signal(signal.SIGINT, orig_sigint)
+
+    for t in threads:
+        t.start()
+    try:
+        for t in threads:
+            t.join()
+            if t.exitcode == -9:
+                logger.error("Looks like the system ran out of memory")
+            if t.exitcode != 0:
+                raise Exception("One of the processes exited with code: {0}"
+                                .format(t.exitcode))
+    except KeyboardInterrupt:
+        for t in threads:
+            t.terminate()
+        raise

@@ -1147,15 +1147,14 @@ def partition_reads(edges, it, side, position_path, cons_align_path,
 
 def _read_alignment(alignment, target_path, min_aln_rate):
     alignments = []
-    aln_reader = SynchronizedSamReader(alignment,
-                                       fp.read_sequence_dict(target_path),
+    fasta_dict = fp.read_sequence_dict(target_path)
+    aln_reader = SynchronizedSamReader(alignment, fasta_dict,
                                        config.vals["max_read_coverage"])
-    while not aln_reader.is_eof():
-        ctg_id, ctg_aln = aln_reader.get_chunk()
-        if ctg_id is None or len(ctg_aln) == 0:
+    for ctg_id in fasta_dict:
+        ctg_aln = aln_reader.get_alignments(ctg_id)
+        if len(ctg_aln) == 0:
             continue
         alignments.append(ctg_aln)
-    aln_reader.close()
 
     return alignments
 

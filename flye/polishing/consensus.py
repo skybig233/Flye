@@ -14,16 +14,17 @@ from flye.six.moves import range
 from flye.six import itervalues
 
 import multiprocessing
-import signal
 import traceback
 
 from flye.polishing.alignment import shift_gaps, get_uniform_alignments
-from flye.utils.sam_parser import SynchronizedSamReader
+from flye.utils.sam_parser import SynchronizedSamReader, SynchonizedChunkManager
 import flye.config.py_cfg as cfg
 import flye.utils.fasta_parser as fp
+from flye.utils.utils import process_in_parallel
 from flye.six.moves import zip
 
 logger = logging.getLogger()
+
 
 class Profile(object):
     __slots__ = ("insertions", "matches", "nucl")
@@ -33,12 +34,17 @@ class Profile(object):
         self.matches = defaultdict(int)
         self.nucl = "-"
 
-def _thread_worker(aln_reader, contigs_info, platform, results_queue,
-                   error_queue):
+def _thread_worker(aln_reader, chunk_feeder, contigs_info, platform,
+                   results_queue, error_queue):
     try:
-        while not aln_reader.is_eof():
-            ctg_id, ctg_aln = aln_reader.get_chunk()
-            if ctg_id is None or len(ctg_aln) == 0:
+        while True:
+            ctg_region = chunk_feeder.get_chunk()
+            if ctg_region is None:
+                break
+            ctg_aln = aln_reader.get_alignments(ctg_region.ctg_id, ctg_region.start,
+                                                ctg_region.end)
+            ctg_id = ctg_region.ctg_id
+            if len(ctg_aln) == 0:
                 continue
 
             profile, aln_errors = _contig_profile(ctg_aln, platform,
@@ -57,42 +63,21 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
     """
     Main function
     """
-    aln_reader = SynchronizedSamReader(alignment_path,
-                                       fp.read_sequence_dict(contigs_path),
+    contigs_fasta = fp.read_sequence_dict(contigs_path)
+    aln_reader = SynchronizedSamReader(alignment_path, contigs_fasta,
                                        max_coverage=cfg.vals["max_read_coverage"],
                                        use_secondary=True)
+    chunk_feeder = SynchonizedChunkManager(contigs_fasta)
+
     manager = multiprocessing.Manager()
     results_queue = manager.Queue()
     error_queue = manager.Queue()
 
-    #making sure the main process catches SIGINT
-    orig_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    threads = []
-    for _ in range(num_proc):
-        threads.append(multiprocessing.Process(target=_thread_worker,
-                                               args=(aln_reader, contigs_info,
-                                                     platform, results_queue,
-                                                     error_queue)))
-    signal.signal(signal.SIGINT, orig_sigint)
-
-    for t in threads:
-        t.start()
-    try:
-        for t in threads:
-            t.join()
-            if t.exitcode == -9:
-                logger.error("Looks like the system ran out of memory")
-            if t.exitcode != 0:
-                raise Exception("One of the processes exited with code: {0}"
-                                .format(t.exitcode))
-    except KeyboardInterrupt:
-        for t in threads:
-            t.terminate()
-        raise
+    process_in_parallel(_thread_worker, (aln_reader, chunk_feeder, contigs_info,
+                            platform, results_queue, error_queue), num_proc)
 
     if not error_queue.empty():
         raise error_queue.get()
-    aln_reader.close()
 
     out_fasta = {}
     total_aln_errors = []
@@ -114,7 +99,7 @@ def _contig_profile(alignment, platform, genome_len):
     """
 
     #leave the best uniform alignments
-    alignment = get_uniform_alignments(alignment, genome_len)
+    alignment = get_uniform_alignments(alignment)
 
     aln_errors = []
     profile = [Profile() for _ in range(genome_len)]

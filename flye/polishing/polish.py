@@ -165,11 +165,10 @@ def generate_polished_edges(edges_file, gfa_file, polished_contigs, work_dir,
     aln_by_edge = defaultdict(list)
 
     #getting one best alignment for each contig
-    while not aln_reader.is_eof():
-        _, ctg_aln = aln_reader.get_chunk()
+    for ctg in polished_dict:
+        ctg_aln = aln_reader.get_alignments(ctg)
         for aln in ctg_aln:
             aln_by_edge[aln.qry_id].append(aln)
-    aln_reader.close()
 
     MIN_CONTAINMENT = 0.9
     updated_seqs = 0

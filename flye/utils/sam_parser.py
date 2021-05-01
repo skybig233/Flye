@@ -18,9 +18,8 @@ import logging
 import multiprocessing
 import ctypes
 import time
-import gzip
-import io
 import random
+from copy import copy
 
 #In Python2, everything is bytes (=str)
 #In Python3, we are doing IO in bytes, but everywhere else strngs = unicode
@@ -46,6 +45,9 @@ Alignment = namedtuple("Alignment", ["qry_id", "trg_id", "qry_start", "qry_end",
                                      "trg_end", "trg_sign", "trg_len",
                                      "qry_seq", "trg_seq", "err_rate",
                                      "is_secondary"])
+
+
+ContigRegion = namedtuple("ContigRegion", ["ctg_id", "start", "end"])
 
 
 class AlignmentException(Exception):
@@ -120,6 +122,61 @@ def read_paf_grouped(filename):
             yield target_hits[trg]
 
 
+class SynchonizedChunkManager(object):
+    """
+    Helper class to organize multiprocessing.
+    Stores the list of reference segments / chunks and can
+    return them in multiple threds
+    """
+    def __init__(self, reference_fasta, chunk_size=None):
+        #prepare list of chunks to read
+        self.fetch_list = []
+        self.chunk_size = chunk_size
+
+        #will be shared between processes
+        self.shared_manager = multiprocessing.Manager()
+        self.shared_num_jobs = multiprocessing.Value(ctypes.c_int, 0)
+        self.shared_lock = self.shared_manager.Lock()
+        self.shared_eof = multiprocessing.Value(ctypes.c_bool, False)
+
+
+        for ctg_id in reference_fasta:
+            ctg_len = len(reference_fasta[ctg_id])
+            chunk_size = self.chunk_size if self.chunk_size is not None else ctg_len
+            for i in range(0, max(ctg_len // chunk_size, 1)):
+                reg_start = i * chunk_size
+                reg_end = (i + 1) * chunk_size
+                if ctg_len - reg_end < chunk_size:
+                    reg_end = ctg_len
+                self.fetch_list.append(ContigRegion(ctg_id, reg_start, reg_end))
+                logger.debug("Region: {0} {1} {2}".format(ctg_id, reg_start, reg_end))
+
+        if len(self.fetch_list) == 0:
+            self.shared_eof.value = True
+
+    def is_done(self):
+        return self.shared_eof.value
+
+    def get_chunk(self):
+        job_id = None
+        while True:
+            with self.shared_lock:
+                if self.shared_eof.value:
+                    return None
+
+                job_id = self.shared_num_jobs.value
+                self.shared_num_jobs.value = self.shared_num_jobs.value + 1
+                if self.shared_num_jobs.value == len(self.fetch_list):
+                    self.shared_eof.value = True
+                break
+
+            time.sleep(0.01)
+
+        parsed_contig = _BYTES(self.fetch_list[job_id].ctg_id)
+        region = self.fetch_list[job_id]
+        return region
+
+
 class SynchronizedSamReader(object):
     """
     Parses SAM file in multiple threads.
@@ -132,31 +189,14 @@ class SynchronizedSamReader(object):
 
         #will not be changed during exceution, each process has its own copy
         self.aln_path = sam_alignment
-        #self.ref_fasta = {_BYTES(h) : _BYTES(s)
-        #                  for (h, s) in iteritems(reference_fasta)}
-        self.fetch_list = [_BYTES(k) for k in reference_fasta.keys()]
         self.max_coverage = max_coverage
         self.use_secondary = use_secondary
         self.cigar_parser = re.compile(b"[0-9]+[MIDNSHP=X]")
 
-        #will be shared between processes
         self.shared_manager = multiprocessing.Manager()
-        self.shared_num_jobs = multiprocessing.Value(ctypes.c_int, 0)
-        self.shared_lock = self.shared_manager.Lock()
-        self.shared_eof = multiprocessing.Value(ctypes.c_bool, False)
-
         self.ref_fasta = self.shared_manager.dict()
         for (h, s) in iteritems(reference_fasta):
             self.ref_fasta[_BYTES(h)] = _BYTES(s)
-
-        if len(self.fetch_list) == 0:
-            self.shared_eof.value = True
-
-    def close(self):
-        pass
-
-    def is_eof(self):
-        return self.shared_eof.value
 
     def _parse_cigar(self, cigar_str, read_str, ctg_str, ctg_pos):
         #ctg_str = self.ref_fasta[ctg_name]
@@ -223,37 +263,47 @@ class SynchronizedSamReader(object):
         return (trg_start, trg_end, len(ctg_str), trg_seq,
                 qry_start, qry_end, qry_len, qry_seq, err_rate)
 
-    def get_chunk(self):
+    def trim_and_transpose(_self, alignmens, region_start, region_end):
         """
-        Gets a chunk - safe to use from multiple processes in parallel
+        Transforms alignments so that the are strictly within the interval,
+        and shifts the coordinates relative to this interval
         """
-        ###
-        job_id = None
-        while True:
-            with self.shared_lock:
-                if self.shared_eof.value:
-                    return None, []
+        trimmed_aln = []
+        for aln in alignmens:
+            if aln.trg_start >= region_start and aln.trg_end <= region_end:
+                trimmed_aln.append(aln)
+                continue
 
-                job_id = self.shared_num_jobs.value
-                self.shared_num_jobs.value = self.shared_num_jobs.value + 1
-                if self.shared_num_jobs.value == len(self.fetch_list):
-                    self.shared_eof.value = True
-                break
+        for aln in trimmed_aln:
+            aln = aln._replace(qry_start = aln.qry_start - region_start,
+                               qry_end = aln.qry_end - region_start,
+                               trg_len = region_end - region_start)
 
-            time.sleep(0.01)
+        return trimmed_aln
 
-        parsed_contig = self.fetch_list[job_id]
+    def get_alignments(self, region_id, region_start=None, region_end=None):
+        parsed_contig = _BYTES(region_id)
         contig_str = self.ref_fasta[parsed_contig]
-        chunk_buffer = []
-        aln_file = subprocess.Popen(SAMTOOLS_BIN + " view '" + self.aln_path + "' '" + _STR(parsed_contig) + "'",
+        if region_start is None:
+            region_start = 0
+        if region_end is None:
+            region_end = len(contig_str)
+        #logger.debug("Reading region: {0} {1} {2}".format(region_id, region_start, region_end))
+
+        aln_file = subprocess.Popen("{0} view {1} '{2}:{3}-{4}'"
+                                        .format(SAMTOOLS_BIN, self.aln_path,
+                                                _STR(parsed_contig), region_start, region_end),
                                     shell=True, stdout=subprocess.PIPE).stdout
+
+        chunk_buffer = []
         for line in aln_file:
             chunk_buffer.append(line)
-        ###
 
         #shuffle alignments so that they uniformly distributed. Needed for
         #max_coverage subsampling. Using the same seed for determinism
         random.Random(42).shuffle(chunk_buffer)
+
+        ###
 
         sequence_length = 0
         alignments = []
@@ -300,13 +350,11 @@ class SynchronizedSamReader(object):
             if sequence_length // len(contig_str) > self.max_coverage:
                 break
 
-        #then, alignments by read and by score
+        #finally, sort alignments by read and by score
         alignments.sort(key=lambda a: (a.qry_id, -(a.qry_end - a.qry_start)))
 
-        #if parsed_contig is None:
-        #    return None, []
-        return _STR(parsed_contig), alignments
+        return alignments
 
 
-def _is_sam_header(line):
-    return line[:3] in [b"@PG", b"@HD", b"@SQ", b"@RG", b"@CO"]
+#def _is_sam_header(line):
+#    return line[:3] in [b"@PG", b"@HD", b"@SQ", b"@RG", b"@CO"]
