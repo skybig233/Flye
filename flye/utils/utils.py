@@ -54,3 +54,15 @@ def process_in_parallel(function, arguments, num_proc):
         for t in threads:
             t.terminate()
         raise
+
+
+def get_median(lst):
+    if not lst:
+        raise ValueError("_get_median() arg is an empty sequence")
+    sorted_list = sorted(lst)
+    if len(lst) % 2 == 1:
+        return sorted_list[len(lst) // 2]
+    else:
+        mid1 = sorted_list[(len(lst) // 2) - 1]
+        mid2 = sorted_list[(len(lst) // 2)]
+        return (mid1 + mid2) / 2

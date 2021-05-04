@@ -19,7 +19,7 @@ import flye.utils.fasta_parser as fp
 import flye.config.py_cfg as cfg
 from flye.polishing.alignment import shift_gaps, get_uniform_alignments
 from flye.utils.sam_parser import SynchronizedSamReader, SynchonizedChunkManager
-from flye.utils.utils import process_in_parallel
+from flye.utils.utils import process_in_parallel, get_median
 from flye.six.moves import zip
 
 
@@ -74,7 +74,8 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
             profile, aln_errors = _compute_profile(ctg_aln, err_mode)
             partition, num_long_bubbles = _get_partition(profile, err_mode)
             ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition, ctg_id)
-            mean_cov = sum([len(b.branches) for b in ctg_bubbles]) // (len(ctg_bubbles) + 1)
+
+            mean_cov = get_median([len(b.branches) for b in ctg_bubbles]) if ctg_bubbles else 0
             ctg_bubbles, num_empty, num_long_branch = _postprocess_bubbles(ctg_bubbles)
             for b in ctg_bubbles:
                 b.position += ctg_region.start

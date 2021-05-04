@@ -15,7 +15,7 @@ import logging
 import datetime
 
 import flye.utils.fasta_parser as fp
-from flye.utils.utils import which
+from flye.utils.utils import which, get_median
 from flye.utils.sam_parser import AlignmentException
 from flye.six import iteritems
 from flye.six.moves import range
@@ -97,16 +97,7 @@ def get_uniform_alignments(alignments):
     Leaves top alignments for each position within contig
     assuming uniform coverage distribution
     """
-    def _get_median(lst):
-        if not lst:
-            raise ValueError("_get_median() arg is an empty sequence")
-        sorted_list = sorted(lst)
-        if len(lst) % 2 == 1:
-            return sorted_list[len(lst) // 2]
-        else:
-            mid1 = sorted_list[(len(lst) // 2) - 1]
-            mid2 = sorted_list[(len(lst) // 2)]
-            return (mid1 + mid2) / 2
+
 
     WINDOW = 500
     MIN_COV = 5
@@ -129,7 +120,7 @@ def get_uniform_alignments(alignments):
                 wnd_primary_cov[i] += 1
             wnd_all_cov[i] += 1
 
-    cov_threshold = max(int(_get_median(wnd_primary_cov)), MIN_COV)
+    cov_threshold = max(int(get_median(wnd_primary_cov)), MIN_COV)
 
     selected_alignments = []
     original_sequence = 0
