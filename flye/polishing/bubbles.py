@@ -11,6 +11,7 @@ from __future__ import division
 import logging
 from bisect import bisect
 from flye.six.moves import range
+from collections import defaultdict
 
 import multiprocessing
 import traceback
@@ -68,9 +69,7 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
             #since we are working with contig chunks
             ctg_aln = aln_reader.trim_and_transpose(ctg_aln, ctg_region.start, ctg_region.end)
 
-            #logger.debug("Processing {0}".format(ctg_id))
             ctg_aln = get_uniform_alignments(ctg_aln)
-
             profile, aln_errors = _compute_profile(ctg_aln, err_mode)
             partition, num_long_bubbles = _get_partition(profile, err_mode)
             ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition, ctg_id)
@@ -100,7 +99,7 @@ def make_bubbles(alignment_path, contigs_info, contigs_path,
     """
     The main function: takes an alignment and returns bubbles
     """
-    CHUNK_SIZE = None
+    CHUNK_SIZE = 1000000
 
     contigs_fasta = fp.read_sequence_dict(contigs_path)
     aln_reader = SynchronizedSamReader(alignment_path, contigs_fasta,
@@ -124,7 +123,7 @@ def make_bubbles(alignment_path, contigs_info, contigs_path,
     total_long_branches = 0
     total_empty = 0
     total_aln_errors = []
-    coverage_stats = {}
+    coverage_stats = defaultdict(list)
 
     while not results_queue.empty():
         (ctg_id, num_bubbles, num_long_bubbles,
@@ -135,7 +134,10 @@ def make_bubbles(alignment_path, contigs_info, contigs_path,
         total_empty += num_empty
         total_aln_errors.extend(aln_errors)
         total_bubbles += num_bubbles
-        coverage_stats[ctg_id] = mean_coverage
+        coverage_stats[ctg_id].append(mean_coverage)
+
+    for ctg in coverage_stats:
+        coverage_stats[ctg] = int(sum(coverage_stats[ctg]) / len(coverage_stats[ctg]))
 
     mean_aln_error = sum(total_aln_errors) / (len(total_aln_errors) + 1)
     logger.debug("Generated %d bubbles", total_bubbles)

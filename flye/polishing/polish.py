@@ -69,26 +69,20 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
     for i in range(num_iters):
         logger.info("Polishing genome (%d/%d)", i + 1, num_iters)
 
-        #split into 1Mb chunks to reduce RAM usage
-        #slightly vary chunk size between iterations
-        CHUNK_SIZE = 1000000 - (i % 2) * 100000
-        chunks_file = os.path.join(work_dir, "chunks_{0}.fasta".format(i + 1))
-        split_into_chunks(prev_assembly, CHUNK_SIZE, chunks_file)
-
         ####
         logger.info("Running minimap2")
         alignment_file = os.path.join(work_dir, "minimap_{0}.bam".format(i + 1))
-        make_alignment(chunks_file, read_seqs, num_threads,
+        make_alignment(prev_assembly, read_seqs, num_threads,
                        work_dir, error_mode, alignment_file,
                        reference_mode=True, sam_output=True)
 
         #####
         logger.info("Separating alignment into bubbles")
-        contigs_info = get_contigs_info(chunks_file)
+        contigs_info = get_contigs_info(prev_assembly)
         bubbles_file = os.path.join(work_dir,
                                     "bubbles_{0}.fasta".format(i + 1))
         coverage_stats, mean_aln_error = \
-            make_bubbles(alignment_file, contigs_info, chunks_file,
+            make_bubbles(alignment_file, contigs_info, prev_assembly,
                          error_mode, num_threads,
                          bubbles_file)
 
@@ -108,22 +102,15 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
         _run_polish_bin(bubbles_file, subs_matrix, hopo_matrix,
                         consensus_out, num_threads, output_progress)
         polished_fasta, polished_lengths = _compose_sequence(consensus_out)
-        merged_chunks = merge_chunks(polished_fasta)
-        fp.write_fasta_dict(merged_chunks, polished_file)
+        fp.write_fasta_dict(polished_fasta, polished_file)
 
         #Cleanup
-        os.remove(chunks_file)
         os.remove(bubbles_file)
         os.remove(consensus_out)
         os.remove(alignment_file)
 
         contig_lengths = polished_lengths
         prev_assembly = polished_file
-
-    #merge information from chunks
-    contig_lengths = merge_chunks(contig_lengths, fold_function=sum)
-    coverage_stats = merge_chunks(coverage_stats,
-                                  fold_function=lambda l: sum(l) // len(l))
 
     with open(stats_file, "w") as f:
         f.write("#seq_name\tlength\tcoverage\n")

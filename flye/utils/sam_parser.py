@@ -149,7 +149,7 @@ class SynchonizedChunkManager(object):
                 if ctg_len - reg_end < chunk_size:
                     reg_end = ctg_len
                 self.fetch_list.append(ContigRegion(ctg_id, reg_start, reg_end))
-                logger.debug("Region: {0} {1} {2}".format(ctg_id, reg_start, reg_end))
+                #logger.debug("Region: {0} {1} {2}".format(ctg_id, reg_start, reg_end))
 
         if len(self.fetch_list) == 0:
             self.shared_eof.value = True
@@ -268,16 +268,56 @@ class SynchronizedSamReader(object):
         Transforms alignments so that the are strictly within the interval,
         and shifts the coordinates relative to this interval
         """
+        MIN_ALN = 100
+
         trimmed_aln = []
         for aln in alignmens:
             if aln.trg_start >= region_start and aln.trg_end <= region_end:
-                trimmed_aln.append(aln)
+                trimmed_aln.append(copy(aln))
                 continue
 
-        for aln in trimmed_aln:
-            aln = aln._replace(qry_start = aln.qry_start - region_start,
-                               qry_end = aln.qry_end - region_start,
-                               trg_len = region_end - region_start)
+            #trimming from left
+            new_qry_start = aln.qry_start
+            new_trg_start = aln.trg_start
+            left_offset = None
+            for left_offset in range(len(aln.trg_seq)):
+                if new_trg_start >= region_start:
+                    break
+                if aln.trg_seq[left_offset] != "-":
+                    new_trg_start += 1
+                if aln.qry_seq[left_offset] != "-":
+                    new_qry_start += 1
+
+            #trimming from right
+            new_qry_end = aln.qry_end
+            new_trg_end = aln.trg_end
+            right_offset = None
+            for right_offset in range(len(aln.trg_seq)):
+                if new_trg_end <= region_end:
+                    break
+                if aln.trg_seq[-1 - right_offset] != "-":
+                    new_trg_end -= 1
+                if aln.qry_seq[-1 - right_offset] != "-":
+                    new_qry_end -= 1
+
+            if new_trg_end - new_qry_end > MIN_ALN:
+                new_qry_seq = aln.qry_seq[left_offset : len(aln.qry_seq) - right_offset]
+                new_trg_seq = aln.trg_seq[left_offset : len(aln.trg_seq) - right_offset]
+                trimmed_aln.append(aln._replace(qry_start=new_qry_start, qry_end=new_qry_end,
+                                                trg_start=new_trg_start, trg_end=new_trg_end,
+                                                qry_seq=new_qry_seq, trg_seq=new_trg_seq))
+
+            #print("Aln trg", aln.trg_start, aln.trg_end, "qry", aln.qry_start, aln.qry_end)
+            #print("Left offset", left_offset, "right offset", right_offset)
+            #print("New aln", new_trg_start, new_trg_end, new_qry_start, new_qry_end)
+            #print("")
+
+        for i, aln in enumerate(trimmed_aln):
+            trimmed_aln[i] = aln._replace(trg_start=aln.trg_start - region_start,
+                                          trg_end=aln.trg_end - region_start,
+                                          trg_len=region_end - region_start)
+
+        #print(len(alignmens), len(trimmed_aln))
 
         return trimmed_aln
 
