@@ -34,8 +34,8 @@ class Profile(object):
         self.matches = defaultdict(int)
         self.nucl = "-"
 
-def _thread_worker(aln_reader, chunk_feeder, contigs_info, platform,
-                   results_queue, error_queue):
+
+def _thread_worker(aln_reader, chunk_feeder, platform, results_queue, error_queue):
     try:
         while True:
             ctg_region = chunk_feeder.get_chunk()
@@ -47,10 +47,12 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, platform,
             if len(ctg_aln) == 0:
                 continue
 
-            profile, aln_errors = _contig_profile(ctg_aln, platform,
-                                                  contigs_info[ctg_id].length)
+            ctg_aln = aln_reader.trim_and_transpose(ctg_aln, ctg_region.start, ctg_region.end)
+            ctg_aln = get_uniform_alignments(ctg_aln)
+
+            profile, aln_errors = _contig_profile(ctg_aln, platform)
             sequence = _flatten_profile(profile)
-            results_queue.put((ctg_id, sequence, aln_errors))
+            results_queue.put((ctg_id, ctg_region.start, sequence, aln_errors))
 
     except Exception as e:
         logger.error("Thread exception")
@@ -63,29 +65,36 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
     """
     Main function
     """
+
+    CHUNK_SIZE = 1000000
     contigs_fasta = fp.read_sequence_dict(contigs_path)
     aln_reader = SynchronizedSamReader(alignment_path, contigs_fasta,
                                        max_coverage=cfg.vals["max_read_coverage"],
                                        use_secondary=True)
-    chunk_feeder = SynchonizedChunkManager(contigs_fasta)
+    chunk_feeder = SynchonizedChunkManager(contigs_fasta, CHUNK_SIZE)
 
     manager = multiprocessing.Manager()
     results_queue = manager.Queue()
     error_queue = manager.Queue()
 
-    process_in_parallel(_thread_worker, (aln_reader, chunk_feeder, contigs_info,
+    process_in_parallel(_thread_worker, (aln_reader, chunk_feeder,
                             platform, results_queue, error_queue), num_proc)
 
     if not error_queue.empty():
         raise error_queue.get()
 
-    out_fasta = {}
+    chunk_consensus = defaultdict(list)
     total_aln_errors = []
     while not results_queue.empty():
-        ctg_id, ctg_seq, aln_errors = results_queue.get()
+        ctg_id, region_start, ctg_seq, aln_errors = results_queue.get()
         total_aln_errors.extend(aln_errors)
         if len(ctg_seq) > 0:
-            out_fasta[ctg_id] = ctg_seq
+            chunk_consensus[ctg_id].append((region_start, ctg_seq))
+
+    out_fasta = {}
+    for ctg in chunk_consensus:
+        sorted_chunks = [x[1] for x in sorted(chunk_consensus[ctg], key=lambda p: p[0])]
+        out_fasta[ctg] = "".join(sorted_chunks)
 
     mean_aln_error = sum(total_aln_errors) / (len(total_aln_errors) + 1)
     logger.info("Alignment error rate: %f", mean_aln_error)
@@ -93,13 +102,15 @@ def get_consensus(alignment_path, contigs_path, contigs_info, num_proc,
     return out_fasta
 
 
-def _contig_profile(alignment, platform, genome_len):
+def _contig_profile(alignment, platform):
     """
     Computes alignment profile
     """
 
-    #leave the best uniform alignments
-    alignment = get_uniform_alignments(alignment)
+    if not alignment:
+        return []
+
+    genome_len = alignment[0].trg_len
 
     aln_errors = []
     profile = [Profile() for _ in range(genome_len)]
