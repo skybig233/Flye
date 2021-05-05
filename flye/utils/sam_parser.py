@@ -44,7 +44,7 @@ Alignment = namedtuple("Alignment", ["qry_id", "trg_id", "qry_start", "qry_end",
                                      "qry_sign", "qry_len", "trg_start",
                                      "trg_end", "trg_sign", "trg_len",
                                      "qry_seq", "trg_seq", "err_rate",
-                                     "is_secondary"])
+                                     "is_secondary", "is_supplementary", "map_qv"])
 
 
 ContigRegion = namedtuple("ContigRegion", ["ctg_id", "start", "end"])
@@ -356,18 +356,17 @@ class SynchronizedSamReader(object):
             flags = int(tokens[1])
             is_unmapped = flags & 0x4
             is_secondary = flags & 0x100
-            #is_supplementary = flags & 0x800    #allow supplementary
-            #if is_unmapped or is_secondary: continue
+            is_supplementary = flags & 0x800
+            is_reversed = flags & 0x16
+
             if is_unmapped: continue
             if is_secondary and not self.use_secondary: continue
 
             read_id = tokens[0]
-            #read_contig = tokens[2]
             cigar_str = tokens[5]
             read_str = tokens[9]
+            map_qv = int(tokens[4])
             ctg_pos = int(tokens[3])
-            is_reversed = flags & 0x16
-            is_secondary = flags & 0x100
 
             if read_str == b"*":
                 raise Exception("Error parsing SAM: record without read sequence")
@@ -382,8 +381,8 @@ class SynchronizedSamReader(object):
             aln = Alignment(_STR(read_id), _STR(parsed_contig),
                             qry_start, qry_end, "-" if is_reversed else "+", qry_len,
                             trg_start, trg_end, "+", trg_len,
-                            _STR(qry_seq), _STR(trg_seq),
-                            err_rate, is_secondary)
+                            _STR(qry_seq), _STR(trg_seq), err_rate,
+                            is_secondary, is_supplementary, map_qv)
             alignments.append(aln)
 
             sequence_length += qry_end - qry_start

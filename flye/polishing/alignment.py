@@ -97,14 +97,16 @@ def get_uniform_alignments(alignments):
     Leaves top alignments for each position within contig
     assuming uniform coverage distribution
     """
-
-
-    WINDOW = 500
-    MIN_COV = 5
-    GOOD_RATE = 0.66
-
     if not alignments:
         return []
+
+    WINDOW = 500
+    MIN_COV = 10
+    GOOD_RATE = 0.66
+    MIN_QV = 30
+
+    def is_reliable(aln):
+        return not aln.is_secondary and not aln.is_supplementary and aln.map_qv >= MIN_QV
 
     seq_len = alignments[0].trg_len
     ctg_id = alignments[0].trg_id
@@ -116,7 +118,7 @@ def get_uniform_alignments(alignments):
 
     for aln in alignments:
         for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW + 1):
-            if not aln.is_secondary:
+            if is_reliable(aln):
                 wnd_primary_cov[i] += 1
             wnd_all_cov[i] += 1
 
@@ -142,16 +144,17 @@ def get_uniform_alignments(alignments):
     sec_aln_scores = {}
     for aln in alignments:
         original_sequence += aln.trg_end - aln.trg_start
+
         #always keep primary alignments, regardless of local coverage
-        if not aln.is_secondary:
+        if is_reliable(aln):
             primary_sequence += aln.trg_end - aln.trg_start
             primary_aln += 1
             selected_alignments.append(aln)
-            continue
 
         #if alignment is secondary, count how many windows it helps to improve
-        wnd_good, wnd_bad = _aln_score(aln)
-        sec_aln_scores[aln.qry_id] = (wnd_good, wnd_bad, aln)
+        else:
+            wnd_good, wnd_bad = _aln_score(aln)
+            sec_aln_scores[aln.qry_id] = (wnd_good, wnd_bad, aln)
 
     #logger.debug("Seq: {0} pri_cov: {1} all_cov: {2}".format(ctg_id, _get_median(wnd_primary_cov),
     #                                                         _get_median(wnd_all_cov)))
