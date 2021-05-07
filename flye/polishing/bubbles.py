@@ -11,15 +11,16 @@ from __future__ import division
 import logging
 from bisect import bisect
 from flye.six.moves import range
+from collections import defaultdict
 
 import multiprocessing
 import traceback
-import signal
 
 import flye.utils.fasta_parser as fp
 import flye.config.py_cfg as cfg
 from flye.polishing.alignment import shift_gaps, get_uniform_alignments
-from flye.utils.sam_parser import SynchronizedSamReader
+from flye.utils.sam_parser import SynchronizedSamReader, SynchonizedChunkManager
+from flye.utils.utils import process_in_parallel, get_median
 from flye.six.moves import zip
 
 
@@ -48,35 +49,41 @@ class Bubble(object):
         self.consensus = ""
 
 
-def _thread_worker(aln_reader, contigs_info, err_mode,
+def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
                    results_queue, error_queue, bubbles_file_handle,
                    bubbles_file_lock):
     """
     Will run in parallel
     """
     try:
-        while not aln_reader.is_eof():
-            ctg_id, ctg_aln = aln_reader.get_chunk()
-            if ctg_id is None or len(ctg_aln) == 0:
+        while True:
+            ctg_region = chunk_feeder.get_chunk()
+            if ctg_region is None:
+                break
+            ctg_aln = aln_reader.get_alignments(ctg_region.ctg_id, ctg_region.start,
+                                                ctg_region.end)
+            ctg_id = ctg_region.ctg_id
+            if len(ctg_aln) == 0:
                 continue
 
-            #logger.debug("Processing {0}".format(ctg_id))
-            #get top unifom alignments
-            ctg_aln = get_uniform_alignments(ctg_aln, contigs_info[ctg_id].length)
+            #since we are working with contig chunks
+            ctg_aln = aln_reader.trim_and_transpose(ctg_aln, ctg_region.start, ctg_region.end)
 
-            profile, aln_errors = _compute_profile(ctg_aln, err_mode,
-                                                   contigs_info[ctg_id].length)
+            ctg_aln = get_uniform_alignments(ctg_aln)
+            profile, aln_errors = _compute_profile(ctg_aln, err_mode)
             partition, num_long_bubbles = _get_partition(profile, err_mode)
-            ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition,
-                                           contigs_info[ctg_id])
-            mean_cov = sum([len(b.branches) for b in ctg_bubbles]) // (len(ctg_bubbles) + 1)
-            ctg_bubbles, num_empty, num_long_branch = \
-                                    _postprocess_bubbles(ctg_bubbles)
+            ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition, ctg_id)
+
+            mean_cov = get_median([len(b.branches) for b in ctg_bubbles]) if ctg_bubbles else 0
+            ctg_bubbles, num_empty, num_long_branch = _postprocess_bubbles(ctg_bubbles)
+            for b in ctg_bubbles:
+                b.position += ctg_region.start
+
+            with bubbles_file_lock:
+                _output_bubbles(ctg_bubbles, bubbles_file_handle)
             results_queue.put((ctg_id, len(ctg_bubbles), num_long_bubbles,
                                num_empty, num_long_branch, aln_errors,
                                mean_cov))
-            with bubbles_file_lock:
-                _output_bubbles(ctg_bubbles, bubbles_file_handle)
 
             del profile
             del ctg_bubbles
@@ -92,52 +99,31 @@ def make_bubbles(alignment_path, contigs_info, contigs_path,
     """
     The main function: takes an alignment and returns bubbles
     """
-    aln_reader = SynchronizedSamReader(alignment_path,
-                                       fp.read_sequence_dict(contigs_path),
-                                       cfg.vals["max_read_coverage"],
-                                       use_secondary=True)
+    CHUNK_SIZE = 1000000
+
+    contigs_fasta = fp.read_sequence_dict(contigs_path)
+    aln_reader = SynchronizedSamReader(alignment_path, contigs_fasta,
+                                       cfg.vals["max_read_coverage"], use_secondary=True)
+    chunk_feeder = SynchonizedChunkManager(contigs_fasta, chunk_size=CHUNK_SIZE)
+
     manager = multiprocessing.Manager()
     results_queue = manager.Queue()
     error_queue = manager.Queue()
-
-    #making sure the main process catches SIGINT
-    orig_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    threads = []
     bubbles_out_lock = multiprocessing.Lock()
     bubbles_out_handle = open(bubbles_out, "w")
-    for _ in range(num_proc):
-        threads.append(multiprocessing.Process(target=_thread_worker,
-                                               args=(aln_reader, contigs_info,
-                                                     err_mode, results_queue,
-                                                     error_queue, bubbles_out_handle,
-                                                     bubbles_out_lock)))
-    signal.signal(signal.SIGINT, orig_sigint)
 
-    for t in threads:
-        t.start()
-    try:
-        for t in threads:
-            t.join()
-            if t.exitcode == -9:
-                logger.error("Looks like the system ran out of memory")
-            if t.exitcode != 0:
-                raise Exception("One of the processes exited with code: {0}"
-                                .format(t.exitcode))
-    except KeyboardInterrupt:
-        for t in threads:
-            t.terminate()
-        raise
-
+    process_in_parallel(_thread_worker, (aln_reader, chunk_feeder, contigs_info, err_mode,
+                         results_queue, error_queue, bubbles_out_handle, bubbles_out_lock), num_proc)
     if not error_queue.empty():
         raise error_queue.get()
-    aln_reader.close()
 
+    #logging
     total_bubbles = 0
     total_long_bubbles = 0
     total_long_branches = 0
     total_empty = 0
     total_aln_errors = []
-    coverage_stats = {}
+    coverage_stats = defaultdict(list)
 
     while not results_queue.empty():
         (ctg_id, num_bubbles, num_long_bubbles,
@@ -148,13 +134,17 @@ def make_bubbles(alignment_path, contigs_info, contigs_path,
         total_empty += num_empty
         total_aln_errors.extend(aln_errors)
         total_bubbles += num_bubbles
-        coverage_stats[ctg_id] = mean_coverage
+        coverage_stats[ctg_id].append(mean_coverage)
+
+    for ctg in coverage_stats:
+        coverage_stats[ctg] = int(sum(coverage_stats[ctg]) / len(coverage_stats[ctg]))
 
     mean_aln_error = sum(total_aln_errors) / (len(total_aln_errors) + 1)
     logger.debug("Generated %d bubbles", total_bubbles)
     logger.debug("Split %d long bubbles", total_long_bubbles)
     logger.debug("Skipped %d empty bubbles", total_empty)
     logger.debug("Skipped %d bubbles with long branches", total_long_branches)
+    ###
 
     return coverage_stats, mean_aln_error
 
@@ -273,15 +263,21 @@ def _is_simple_kmer(profile, position):
     return True
 
 
-def _compute_profile(alignment, platform, genome_len):
+def _compute_profile(alignment, platform):
     """
     Computes alignment profile
     """
+    if len(alignment) == 0:
+        raise Exception("No alignmemnts!")
+    genome_len = alignment[0].trg_len
+
     max_aln_err = cfg.vals["err_modes"][platform]["max_aln_error"]
     min_aln_len = cfg.vals["min_polish_aln_len"]
     aln_errors = []
     #filtered = 0
     profile = [ProfileInfo() for _ in range(genome_len)]
+
+
     for aln in alignment:
         if aln.err_rate > max_aln_err or len(aln.qry_seq) < min_aln_len:
             #filtered += 1
@@ -362,30 +358,27 @@ def _get_partition(profile, err_mode):
     return partition, long_bubbles
 
 
-def _get_bubble_seqs(alignment, platform, profile, partition, contig_info):
+def _get_bubble_seqs(alignment, platform, profile, partition, contig_id):
     """
     Given genome landmarks, forms bubble sequences
     """
-    if not partition:
+    if not partition or not alignment:
         return []
 
-    #max_aln_err = cfg.vals["err_modes"][platform]["max_aln_error"]
+    ctg_len = alignment[0].trg_len
+
     bubbles = []
-    ext_partition = [0] + partition + [contig_info.length]
+    ext_partition = [0] + partition + [ctg_len]
     for p_left, p_right in zip(ext_partition[:-1], ext_partition[1:]):
-        bubbles.append(Bubble(contig_info.id, p_left))
+        bubbles.append(Bubble(contig_id, p_left))
         consensus = [p.nucl for p in profile[p_left : p_right]]
         bubbles[-1].consensus = "".join(consensus)
 
     for aln in alignment:
-        #if aln.err_rate > max_aln_err: continue
-
-        bubble_id = bisect(partition, aln.trg_start % contig_info.length)
+        bubble_id = bisect(partition, aln.trg_start)
         next_bubble_start = ext_partition[bubble_id + 1]
-        chromosome_start = (bubble_id == 0 and
-                            not contig_info.type == "circular")
-        chromosome_end = (aln.trg_end > partition[-1] and not
-                          contig_info.type == "circular")
+        chromosome_start = bubble_id == 0
+        chromosome_end = aln.trg_end > partition[-1]
 
         branch_start = None
         first_segment = True
@@ -393,8 +386,8 @@ def _get_bubble_seqs(alignment, platform, profile, partition, contig_info):
         for i, trg_nuc in enumerate(aln.trg_seq):
             if trg_nuc == "-":
                 continue
-            if trg_pos >= contig_info.length:
-                trg_pos -= contig_info.length
+            #if trg_pos >= contig_info.length:
+                #trg_pos -= contig_info.length
 
             if trg_pos >= next_bubble_start or trg_pos == 0:
                 if not first_segment or chromosome_start:

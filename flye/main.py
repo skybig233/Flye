@@ -310,27 +310,19 @@ class JobConsensus(Job):
         if not os.path.isdir(self.consensus_dir):
             os.mkdir(self.consensus_dir)
 
-        #split into 1Mb chunks to reduce RAM usage
-        CHUNK_SIZE = 1000000
-        chunks_file = os.path.join(self.consensus_dir, "chunks.fasta")
-        chunks = aln.split_into_chunks(self.in_contigs, CHUNK_SIZE, chunks_file)
-
         logger.info("Running Minimap2")
         out_alignment = os.path.join(self.consensus_dir, "minimap.bam")
-        aln.make_alignment(chunks_file, self.args.reads, self.args.threads,
+        aln.make_alignment(self.in_contigs, self.args.reads, self.args.threads,
                            self.consensus_dir, self.args.platform, out_alignment,
                            reference_mode=True, sam_output=True)
 
-        contigs_info = aln.get_contigs_info(chunks_file)
+        contigs_info = aln.get_contigs_info(self.in_contigs)
         logger.info("Computing consensus")
-        consensus_fasta = cons.get_consensus(out_alignment, chunks_file,
+        consensus_fasta = cons.get_consensus(out_alignment, self.in_contigs,
                                              contigs_info, self.args.threads,
                                              self.args.platform)
 
-        #merge chunks back into single sequences
-        merged_fasta = aln.merge_chunks(consensus_fasta)
-        fp.write_fasta_dict(merged_fasta, self.out_consensus)
-        os.remove(chunks_file)
+        fp.write_fasta_dict(consensus_fasta, self.out_consensus)
         os.remove(out_alignment)
 
 

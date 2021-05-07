@@ -15,7 +15,7 @@ import logging
 import datetime
 
 import flye.utils.fasta_parser as fp
-from flye.utils.utils import which
+from flye.utils.utils import which, get_median
 from flye.utils.sam_parser import AlignmentException
 from flye.six import iteritems
 from flye.six.moves import range
@@ -92,30 +92,25 @@ def shift_gaps(seq_trg, seq_qry):
     return "".join(lst_qry[1 : -1])
 
 
-def get_uniform_alignments(alignments, seq_len):
+def get_uniform_alignments(alignments):
     """
     Leaves top alignments for each position within contig
     assuming uniform coverage distribution
     """
-    def _get_median(lst):
-        if not lst:
-            raise ValueError("_get_median() arg is an empty sequence")
-        sorted_list = sorted(lst)
-        if len(lst) % 2 == 1:
-            return sorted_list[len(lst) // 2]
-        else:
-            mid1 = sorted_list[(len(lst) // 2) - 1]
-            mid2 = sorted_list[(len(lst) // 2)]
-            return (mid1 + mid2) / 2
-
-    WINDOW = 500
-    MIN_COV = 5
-    GOOD_RATE = 0.66
-
     if not alignments:
         return []
 
+    WINDOW = 500
+    MIN_COV = 10
+    GOOD_RATE = 0.66
+    MIN_QV = 30
+
+    def is_reliable(aln):
+        return not aln.is_secondary and not aln.is_supplementary and aln.map_qv >= MIN_QV
+
+    seq_len = alignments[0].trg_len
     ctg_id = alignments[0].trg_id
+
     #split contig into windows, get median read coverage over all windows and
     #determine the quality threshold cutoffs for each window
     wnd_primary_cov = [0 for _ in range(seq_len // WINDOW + 1)]
@@ -123,11 +118,11 @@ def get_uniform_alignments(alignments, seq_len):
 
     for aln in alignments:
         for i in range(aln.trg_start // WINDOW, aln.trg_end // WINDOW + 1):
-            if not aln.is_secondary:
+            if is_reliable(aln):
                 wnd_primary_cov[i] += 1
             wnd_all_cov[i] += 1
 
-    cov_threshold = max(int(_get_median(wnd_primary_cov)), MIN_COV)
+    cov_threshold = max(int(get_median(wnd_primary_cov)), MIN_COV)
 
     selected_alignments = []
     original_sequence = 0
@@ -149,16 +144,17 @@ def get_uniform_alignments(alignments, seq_len):
     sec_aln_scores = {}
     for aln in alignments:
         original_sequence += aln.trg_end - aln.trg_start
+
         #always keep primary alignments, regardless of local coverage
-        if not aln.is_secondary:
+        if is_reliable(aln):
             primary_sequence += aln.trg_end - aln.trg_start
             primary_aln += 1
             selected_alignments.append(aln)
-            continue
 
         #if alignment is secondary, count how many windows it helps to improve
-        wnd_good, wnd_bad = _aln_score(aln)
-        sec_aln_scores[aln.qry_id] = (wnd_good, wnd_bad, aln)
+        else:
+            wnd_good, wnd_bad = _aln_score(aln)
+            sec_aln_scores[aln.qry_id] = (wnd_good, wnd_bad, aln)
 
     #logger.debug("Seq: {0} pri_cov: {1} all_cov: {2}".format(ctg_id, _get_median(wnd_primary_cov),
     #                                                         _get_median(wnd_all_cov)))
