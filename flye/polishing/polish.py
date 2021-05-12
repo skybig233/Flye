@@ -63,8 +63,9 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, read_platfo
                                cfg.vals["err_modes"][read_platform]["hopo_matrix"])
     use_hopo = cfg.vals["err_modes"][read_platform]["hopo_enabled"]
     use_hopo = use_hopo and (read_type == "raw")
-
     stats_file = os.path.join(work_dir, "contigs_stats.txt")
+
+    bam_input = read_seqs[0].endswith("bam")
 
     prev_assembly = contig_seqs
     contig_lengths = None
@@ -73,11 +74,15 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, read_platfo
         logger.info("Polishing genome (%d/%d)", i + 1, num_iters)
 
         ####
-        logger.info("Running minimap2")
-        alignment_file = os.path.join(work_dir, "minimap_{0}.bam".format(i + 1))
-        make_alignment(prev_assembly, read_seqs, num_threads,
-                       work_dir, read_platform, alignment_file,
-                       reference_mode=True, sam_output=True)
+        if not bam_input:
+            logger.info("Running minimap2")
+            alignment_file = os.path.join(work_dir, "minimap_{0}.bam".format(i + 1))
+            make_alignment(prev_assembly, read_seqs, num_threads,
+                           work_dir, read_platform, alignment_file,
+                           reference_mode=True, sam_output=True)
+        else:
+            logger.info("Polishing with provided bam")
+            alignment_file = read_seqs[0]
 
         #####
         logger.info("Separating alignment into bubbles")
@@ -110,7 +115,8 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, read_platfo
         #Cleanup
         os.remove(bubbles_file)
         os.remove(consensus_out)
-        os.remove(alignment_file)
+        if not bam_input:
+            os.remove(alignment_file)
 
         contig_lengths = polished_lengths
         prev_assembly = polished_file

@@ -507,6 +507,7 @@ def _run_polisher_only(args):
     """
     logger.info("Running Flye polisher")
     logger.debug("Cmd: %s", " ".join(sys.argv))
+    bam_input = False
 
     for read_file in args.reads:
         if not os.path.exists(read_file):
@@ -514,9 +515,18 @@ def _run_polisher_only(args):
         if " " in read_file:
             raise ResumeException("Path to reads contain spaces: " + read_file)
 
+        without_gz = read_file.rstrip(".gz")
+        if not any([without_gz.endswith(x) for x in ["fasta", "fa", "fastq", "fq", "bam"]]):
+            raise ResumeException("Unsupported input. Supported types: fasta/fastq/bam")
+        if without_gz.endswith("bam"):
+            bam_input = True
+
+    if bam_input and len(args.reads) > 1:
+        raise ResumeException("Only single bam input supported")
+
     pol.polish(args.polish_target, args.reads, args.out_dir,
                args.num_iters, args.threads, args.platform,
-               output_progress=True)
+               args.read_type, output_progress=True)
 
 
 def _run(args):

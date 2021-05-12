@@ -186,6 +186,8 @@ class SynchronizedSamReader(object):
         #check that alignment exists
         if not os.path.exists(sam_alignment):
             raise AlignmentException("Can't open {0}".format(sam_alignment))
+        if not os.path.exists(sam_alignment + ".bai"):
+            raise AlignmentException("Bam not indexed: {0}".format(sam_alignment))
 
         #will not be changed during exceution, each process has its own copy
         self.aln_path = sam_alignment
@@ -369,7 +371,8 @@ class SynchronizedSamReader(object):
             ctg_pos = int(tokens[3])
 
             if read_str == b"*":
-                raise Exception("Error parsing SAM: record without read sequence")
+                continue
+                #raise Exception("Error parsing SAM: record without read sequence")
 
             (trg_start, trg_end, trg_len, trg_seq,
             qry_start, qry_end, qry_len, qry_seq, err_rate) = \
