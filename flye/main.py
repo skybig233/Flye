@@ -355,7 +355,7 @@ class JobPolishing(Job):
         contigs, stats = \
             pol.polish(self.in_contigs, self.args.reads, self.polishing_dir,
                        self.args.num_iters, self.args.threads, self.args.platform,
-                       output_progress=True)
+                       self.args.read_type, output_progress=True)
         #contigs = os.path.join(self.polishing_dir, "polished_1.fasta")
         #stats = os.path.join(self.polishing_dir, "contigs_stats.txt")
         pol.filter_by_coverage(self.args, stats, contigs,

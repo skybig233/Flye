@@ -187,7 +187,7 @@ def resolve_each_repeat(rep_id, repeat_edges, all_edge_headers, args,
             os.mkdir(pol_temp_dir)
         polished_template, _ = \
             pol.polish(template, [repeat_reads], pol_temp_dir, NUM_POL_ITERS,
-                       num_threads, args.platform, output_progress=False)
+                       num_threads, args.platform, args.read_type, output_progress=False)
 
         if not os.path.getsize(polished_template):
             for side in side_labels:
@@ -202,7 +202,7 @@ def resolve_each_repeat(rep_id, repeat_edges, all_edge_headers, args,
                 pol_output, _ = \
                     pol.polish(extended.format(side, edge_id), [repeat_reads],
                                pol_ext_dir.format(side, edge_id), NUM_POL_ITERS,
-                               num_threads, args.platform,
+                               num_threads, args.platform, args.read_type,
                                output_progress=False)
                 polished_extended[(side, edge_id)] = pol_output
                 if not os.path.getsize(pol_output):
@@ -318,7 +318,7 @@ def resolve_each_repeat(rep_id, repeat_edges, all_edge_headers, args,
                         os.mkdir(pol_con_dir)
                     pol_con_out, _ = \
                         pol.polish(curr_extended, [curr_reads], pol_con_dir,
-                                   NUM_POL_ITERS, num_threads, args.platform,
+                                   NUM_POL_ITERS, num_threads, args.platform, args.read_type,
                                    output_progress=False)
                     #7b. Cut consensus where coverage drops
                     cutpoint = locate_consensus_cutpoint(

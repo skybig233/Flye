@@ -21,13 +21,6 @@ vals = {
             "subasm" : "config/bin_cfg/asm_subasm.cfg"
         },
 
-        #assembly parameters
-        #"kmer_size" : {
-        #    "raw" : 17,
-        #    "corrected" : 17,
-        #    "hifi" : 17,
-        #    "subasm" : 31
-        #},
         "min_overlap_range" : {
             "raw" : [1000, 5000],
             "corrected" : [1000, 5000],
@@ -35,7 +28,6 @@ vals = {
             "subasm" : [1000, 1000]
         },
         "max_meta_overlap" : 3000,
-        #"reduced_asm_cov"  : 40,
 
         #polishing
         "simple_kmer_length" : 4,
@@ -55,14 +47,16 @@ vals = {
                 "hopo_matrix" : "config/bin_cfg/pacbio_homopolymers.mat",
                 "solid_missmatch" : 0.2,
                 "solid_indel" : 0.2,
-                "max_aln_error" : 0.25
+                "max_aln_error" : 0.25,
+                "hopo_enabled" : False
             },
             "nano" : {
                 "subs_matrix" : "config/bin_cfg/nano_r94_substitutions.mat",
                 "hopo_matrix" : "config/bin_cfg/nano_r94_g36_homopolymers.mat",
                 "solid_missmatch" : 0.3,
                 "solid_indel" : 0.3,
-                "max_aln_error" : 0.25
+                "max_aln_error" : 0.25,
+                "hopo_enabled" : True
             },
         },
 

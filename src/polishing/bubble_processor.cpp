@@ -20,14 +20,15 @@ namespace
 
 BubbleProcessor::BubbleProcessor(const std::string& subsMatPath,
 								 const std::string& hopoMatrixPath,
-								 bool showProgress):
+								 bool showProgress, bool hopoEnabled):
 	_subsMatrix(subsMatPath),
 	_hopoMatrix(hopoMatrixPath),
 	_generalPolisher(_subsMatrix),
 	_homoPolisher(_subsMatrix, _hopoMatrix),
 	_dinucFixer(_subsMatrix),
 	_verbose(false),
-	_showProgress(showProgress)
+	_showProgress(showProgress),
+	_hopoEnabled(hopoEnabled)
 {
 }
 
@@ -96,7 +97,10 @@ void BubbleProcessor::parallelWorker()
 		{
 			_stateMutex.unlock();
 			_generalPolisher.polishBubble(bubble);
-			//_homoPolisher.polishBubble(bubble);
+			if (_hopoEnabled)
+			{
+				_homoPolisher.polishBubble(bubble);
+			}
 			_dinucFixer.fixBubble(bubble);
 			_stateMutex.lock();
 		}

@@ -48,8 +48,8 @@ def check_binaries():
         raise PolishException(str(e))
 
 
-def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
-           output_progress):
+def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, read_platform,
+           read_type, output_progress):
     """
     High-level polisher interface
     """
@@ -58,9 +58,12 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
         logger.disabled = True
 
     subs_matrix = os.path.join(cfg.vals["pkg_root"],
-                               cfg.vals["err_modes"][error_mode]["subs_matrix"])
+                               cfg.vals["err_modes"][read_platform]["subs_matrix"])
     hopo_matrix = os.path.join(cfg.vals["pkg_root"],
-                               cfg.vals["err_modes"][error_mode]["hopo_matrix"])
+                               cfg.vals["err_modes"][read_platform]["hopo_matrix"])
+    use_hopo = cfg.vals["err_modes"][read_platform]["hopo_enabled"]
+    use_hopo = use_hopo and (read_type == "raw")
+
     stats_file = os.path.join(work_dir, "contigs_stats.txt")
 
     prev_assembly = contig_seqs
@@ -73,7 +76,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
         logger.info("Running minimap2")
         alignment_file = os.path.join(work_dir, "minimap_{0}.bam".format(i + 1))
         make_alignment(prev_assembly, read_seqs, num_threads,
-                       work_dir, error_mode, alignment_file,
+                       work_dir, read_platform, alignment_file,
                        reference_mode=True, sam_output=True)
 
         #####
@@ -83,7 +86,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
                                     "bubbles_{0}.fasta".format(i + 1))
         coverage_stats, mean_aln_error = \
             make_bubbles(alignment_file, contigs_info, prev_assembly,
-                         error_mode, num_threads,
+                         read_platform, num_threads,
                          bubbles_file)
 
         logger.info("Alignment error rate: %f", mean_aln_error)
@@ -100,7 +103,7 @@ def polish(contig_seqs, read_seqs, work_dir, num_iters, num_threads, error_mode,
         #####
         logger.info("Correcting bubbles")
         _run_polish_bin(bubbles_file, subs_matrix, hopo_matrix,
-                        consensus_out, num_threads, output_progress)
+                        consensus_out, num_threads, output_progress, use_hopo)
         polished_fasta, polished_lengths = _compose_sequence(consensus_out)
         fp.write_fasta_dict(polished_fasta, polished_file)
 
@@ -259,7 +262,7 @@ def filter_by_coverage(args, stats_in, contigs_in, stats_out, contigs_out):
 
 
 def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
-                    consensus_out, num_threads, output_progress):
+                    consensus_out, num_threads, output_progress, use_hopo):
     """
     Invokes polishing binary
     """
@@ -268,6 +271,9 @@ def _run_polish_bin(bubbles_in, subs_matrix, hopo_matrix,
                "--threads", str(num_threads)]
     if not output_progress:
         cmdline.append("--quiet")
+
+    if use_hopo:
+        cmdline.append("--enable-hopo")
 
     try:
         subprocess.check_call(cmdline)
