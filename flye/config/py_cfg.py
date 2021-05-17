@@ -43,12 +43,12 @@ vals = {
 
         "err_modes" : {
             "pacbio" : {
-                "subs_matrix" : "config/bin_cfg/pacbio_substitutions.mat",
-                "hopo_matrix" : "config/bin_cfg/pacbio_homopolymers.mat",
+                "subs_matrix" : "config/bin_cfg/pacbio_chm13_substitutions.mat",
+                "hopo_matrix" : "config/bin_cfg/pacbio_chm13_homopolymers.mat",
                 "solid_missmatch" : 0.2,
                 "solid_indel" : 0.2,
                 "max_aln_error" : 0.25,
-                "hopo_enabled" : False
+                "hopo_enabled" : True
             },
             "nano" : {
                 "subs_matrix" : "config/bin_cfg/nano_r94_substitutions.mat",
