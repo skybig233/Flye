@@ -74,7 +74,9 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
             partition, num_long_bubbles = _get_partition(profile, err_mode)
             ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition, ctg_id)
 
-            mean_cov = get_median([len(b.branches) for b in ctg_bubbles]) if ctg_bubbles else 0
+            mean_cov = aln_reader.get_median_depth(ctg_region.ctg_id, ctg_region.start,
+                                                   ctg_region.end)
+
             ctg_bubbles, num_empty, num_long_branch = _postprocess_bubbles(ctg_bubbles)
             for b in ctg_bubbles:
                 b.position += ctg_region.start

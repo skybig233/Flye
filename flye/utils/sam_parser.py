@@ -36,6 +36,7 @@ from flye.six.moves import range
 from flye.six import iteritems
 
 import flye.utils.fasta_parser as fp
+from flye.utils.utils import get_median
 
 logger = logging.getLogger()
 
@@ -322,6 +323,25 @@ class SynchronizedSamReader(object):
         #print(len(alignmens), len(trimmed_aln))
 
         return trimmed_aln
+
+    def get_median_depth(self, region_id, region_start=None, region_end=None):
+        parsed_contig = _BYTES(region_id)
+        contig_str = self.ref_fasta[parsed_contig]
+        if region_start is None:
+            region_start = 0
+        if region_end is None:
+            region_end = len(contig_str)
+
+        samtools_out = subprocess.Popen("{0} depth {1} -r '{2}:{3}-{4}' -a -m 0 -Q 10 -l 100"
+                                        .format(SAMTOOLS_BIN, self.aln_path,
+                                                _STR(parsed_contig), region_start, region_end),
+                                        shell=True, stdout=subprocess.PIPE).stdout
+        all_cov_pos = []
+        for line in samtools_out:
+            _ctg, _pos, coverage = line.split()
+            all_cov_pos.append(float(coverage))
+
+        return get_median(all_cov_pos) if all_cov_pos else 0
 
     def get_alignments(self, region_id, region_start=None, region_end=None):
         parsed_contig = _BYTES(region_id)
