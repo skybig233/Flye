@@ -273,7 +273,8 @@ class JobFinalize(Job):
         shutil.copy(self.graph_file, self.out_files["graph"])
         shutil.copy(self.polished_gfa, self.out_files["gfa"])
 
-        scaffolds = scf.generate_scaffolds(self.contigs_file, self.scaffold_links,
+        scf_links = self.scaffold_links if self.args.scaffold else None
+        scaffolds = scf.generate_scaffolds(self.contigs_file, scf_links,
                                            self.out_files["assembly"])
 
         #create the scaffolds.fasta symlink for backward compatability
@@ -619,7 +620,7 @@ def _usage():
             "\t     [--genome-size SIZE] [--threads int] [--iterations int]\n"
             "\t     [--meta] [--plasmids] [--trestle] [--polish-target]\n"
             "\t     [--keep-haplotypes] [--debug] [--version] [--help] \n"
-            "\t     [--resume] [--resume-from] [--stop-after] \n"
+            "\t     [--scaffold] [--resume] [--resume-from] [--stop-after] \n"
             "\t     [--hifi-error float] [--extra-params] [--min-overlap SIZE]")
 
 
@@ -727,9 +728,12 @@ def main():
     parser.add_argument("--keep-haplotypes", action="store_true",
                         dest="keep_haplotypes", default=False,
                         help="do not collapse alternative haplotypes")
+    parser.add_argument("--scaffold", action="store_true",
+                        dest="scaffold", default=False,
+                        help="enable scaffolding using graph [disabled by default]")
     parser.add_argument("--trestle", action="store_true",
                         dest="trestle", default=False,
-                        help="enable Trestle [disabled]")
+                        help="enable Trestle [disabled by default]")
     parser.add_argument("--polish-target", dest="polish_target",
                         metavar="path", required=False,
                         help="run polisher on the target sequence")
