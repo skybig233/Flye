@@ -302,17 +302,21 @@ def _compose_sequence(consensus_file):
         for line in f:
             if header:
                 tokens = line.strip().split(" ")
+                if len(tokens) != 4:
+                    raise Exception("Bubble format error")
+
                 ctg_id = tokens[0][1:]
                 ctg_pos = int(tokens[1])
-                coverage[ctg_id].append(int(tokens[2]))
+                #coverage[ctg_id].append(int(tokens[2]))
+                ctg_sub_pos = int(tokens[3])
             else:
-                consensuses[ctg_id].append((ctg_pos, line.strip()))
+                consensuses[ctg_id].append((ctg_pos, ctg_sub_pos, line.strip()))
             header = not header
 
     polished_fasta = {}
     polished_stats = {}
     for ctg_id, seqs in iteritems(consensuses):
-        sorted_seqs = [p[1] for p in sorted(seqs, key=lambda p: p[0])]
+        sorted_seqs = [p[2] for p in sorted(seqs, key=lambda p: (p[0], p[1]))]
         concat_seq = "".join(sorted_seqs)
         #mean_coverage = sum(coverage[ctg_id]) / len(coverage[ctg_id])
         polished_fasta[ctg_id] = concat_seq

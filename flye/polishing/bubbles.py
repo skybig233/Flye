@@ -40,11 +40,12 @@ class ProfileInfo(object):
 
 
 class Bubble(object):
-    __slots__ = ("contig_id", "position", "branches", "consensus")
+    __slots__ = ("contig_id", "position", "sub_position", "branches", "consensus")
 
     def __init__(self, contig_id, position):
         self.contig_id = contig_id
         self.position = position
+        self.sub_position = 0
         self.branches = []
         self.consensus = ""
 
@@ -77,7 +78,9 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
             mean_cov = aln_reader.get_median_depth(ctg_region.ctg_id, ctg_region.start,
                                                    ctg_region.end)
 
-            ctg_bubbles, num_empty, num_long_branch = _postprocess_bubbles(ctg_bubbles)
+            ctg_bubbles, num_empty = _postprocess_bubbles(ctg_bubbles)
+            ctg_bubbles, num_long_branch = _split_long_bubbles(ctg_bubbles)
+            #num_long_branch = 0
             for b in ctg_bubbles:
                 b.position += ctg_region.start
 
@@ -156,9 +159,12 @@ def _output_bubbles(bubbles, out_stream):
     Outputs list of bubbles into file
     """
     for bubble in bubbles:
-        out_stream.write(">{0} {1} {2}\n".format(bubble.contig_id,
-                                        bubble.position,
-                                        len(bubble.branches)))
+        if len(bubble.branches) == 0:
+            raise Exception("No branches in a bubble")
+        out_stream.write(">{0} {1} {2} {3}\n".format(bubble.contig_id,
+                                                     bubble.position,
+                                                     len(bubble.branches),
+                                                     bubble.sub_position))
         out_stream.write(bubble.consensus + "\n")
         for branch_id, branch in enumerate(bubble.branches):
             out_stream.write(">{0}\n".format(branch_id))
@@ -167,49 +173,85 @@ def _output_bubbles(bubbles, out_stream):
     out_stream.flush()
 
 
+def _split_long_bubbles(bubbles):
+    MAX_BUBBLE = cfg.vals["max_bubble_length"]
+    #MAX_BUBBLE = 50
+    #MAX_BRANCH = MAX_BUBBLE * 1.5
+    new_bubbles = []
+    long_branches = 0
+
+    for bubble in bubbles:
+        median_branch = sorted(bubble.branches, key=len)[len(bubble.branches) // 2]
+        num_chunks = len(median_branch) // MAX_BUBBLE
+        #if len(median_branch) > MAX_BRANCH:
+        if num_chunks > 1:
+            logger.debug("Splitting: pos:{0} len:{1}".format(bubble.position, len(median_branch)))
+            long_branches += 1
+
+            for part_num in range(num_chunks):
+                new_branches = []
+                for b in bubble.branches:
+                    chunk_len = len(b) // num_chunks
+                    start = part_num * chunk_len
+                    end = (part_num + 1) * chunk_len if part_num != num_chunks - 1 else len(b)
+                    new_branches.append(b[start:end])
+
+                new_bubbles.append(Bubble(bubble.contig_id, bubble.position))
+                new_bubbles[-1].consensus = new_branches[0]
+                new_bubbles[-1].branches = new_branches
+                new_bubbles[-1].sub_position = part_num
+
+        else:
+            new_bubbles.append(bubble)
+
+    return new_bubbles, long_branches
+
+
 def _postprocess_bubbles(bubbles):
     MAX_BUBBLE = cfg.vals["max_bubble_length"]
     MAX_BRANCHES = cfg.vals["max_bubble_branches"]
 
     new_bubbles = []
-    long_branches = 0
     empty_bubbles = 0
     for bubble in bubbles:
         if len(bubble.branches) == 0:
-            #logger.debug("Empty bubble {0}".format(bubble.position))
             empty_bubbles += 1
             continue
 
-        new_branches = []
-        median_branch = (sorted(bubble.branches, key=len)[len(bubble.branches) // 2])
+        median_branch = sorted(bubble.branches, key=len)[len(bubble.branches) // 2]
         if len(median_branch) == 0:
+            logger.debug("Median branch with zero length: {0}".format(bubble.position))
+            empty_bubbles += 1
             continue
 
-        #Bubble is TOO BIIG, will not correct it (maybe at the next iteration)
-        if len(median_branch) > MAX_BUBBLE * 1.5:
-            new_branches = [median_branch]
-            long_branches += 1
+        #only take branches that are not significantly differ in length from the median
+        new_branches = []
+        for branch in bubble.branches:
+            incons_rate = abs(len(branch) - len(median_branch)) / len(median_branch)
+            if incons_rate < 0.5 and len(branch) > 0:
+                new_branches.append(branch)
 
-        else:
-            for branch in bubble.branches:
-                incons_rate = abs(len(branch) - len(median_branch)) / len(median_branch)
-                if incons_rate < 0.5:
-                    if len(branch) == 0:
-                        branch = "A"
-                        #logger.debug("Zero branch")
-                    new_branches.append(branch)
+        #checking again (since we might have tossed some branches)
+        if len(bubble.branches) == 0:
+            empty_bubbles += 1
+            continue
 
-        if (abs(len(median_branch) - len(bubble.consensus)) > len(median_branch) // 2):
+        #if bubble consensus has very different length from all the branchs, replace
+        #consensus with the median branch instead
+        if abs(len(median_branch) - len(bubble.consensus)) > len(median_branch) // 2:
             bubble.consensus = median_branch
 
+        #finally, keep only MAX_BRANCHES
         if len(new_branches) > MAX_BRANCHES:
-            new_branches = new_branches[:MAX_BRANCHES]
+            left = len(new_branches) // 2 - MAX_BRANCHES // 2
+            right = left + MAX_BRANCHES
+            new_branches = sorted(new_branches, key=len)[left:right]
 
         new_bubbles.append(Bubble(bubble.contig_id, bubble.position))
         new_bubbles[-1].consensus = bubble.consensus
         new_bubbles[-1].branches = new_branches
 
-    return new_bubbles, empty_bubbles, long_branches
+    return new_bubbles, empty_bubbles
 
 
 def _is_solid_kmer(profile, position, err_mode):
