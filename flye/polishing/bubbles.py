@@ -220,7 +220,7 @@ def _postprocess_bubbles(bubbles):
 
         median_branch = sorted(bubble.branches, key=len)[len(bubble.branches) // 2]
         if len(median_branch) == 0:
-            logger.debug("Median branch with zero length: {0}".format(bubble.position))
+            #logger.debug("Median branch with zero length: {0}".format(bubble.position))
             empty_bubbles += 1
             continue
 
