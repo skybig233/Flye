@@ -185,7 +185,7 @@ def _split_long_bubbles(bubbles):
         num_chunks = len(median_branch) // MAX_BUBBLE
         #if len(median_branch) > MAX_BRANCH:
         if num_chunks > 1:
-            logger.debug("Splitting: pos:{0} len:{1}".format(bubble.position, len(median_branch)))
+            #logger.debug("Splitting: pos:{0} len:{1}".format(bubble.position, len(median_branch)))
             long_branches += 1
 
             for part_num in range(num_chunks):
@@ -315,15 +315,15 @@ def _compute_profile(alignment, platform):
         raise Exception("No alignmemnts!")
     genome_len = alignment[0].trg_len
 
-    max_aln_err = cfg.vals["err_modes"][platform]["max_aln_error"]
+    #max_aln_err = cfg.vals["err_modes"][platform]["max_aln_error"]
     min_aln_len = cfg.vals["min_polish_aln_len"]
     aln_errors = []
     #filtered = 0
     profile = [ProfileInfo() for _ in range(genome_len)]
 
-
     for aln in alignment:
-        if aln.err_rate > max_aln_err or len(aln.qry_seq) < min_aln_len:
+        #if aln.err_rate > max_aln_err or len(aln.qry_seq) < min_aln_len:
+        if len(aln.qry_seq) < min_aln_len:
             #filtered += 1
             continue
 
@@ -336,8 +336,8 @@ def _compute_profile(alignment, platform):
         for trg_nuc, qry_nuc in zip(trg_seq, qry_seq):
             if trg_nuc == "-":
                 trg_pos -= 1
-            if trg_pos >= genome_len:
-                trg_pos -= genome_len
+            #if trg_pos >= genome_len:
+            #    trg_pos -= genome_len
 
             prof_elem = profile[trg_pos]
             if trg_nuc == "-":
