@@ -201,6 +201,16 @@ class SynchronizedSamReader(object):
         for (h, s) in iteritems(reference_fasta):
             self.ref_fasta[_BYTES(h)] = _BYTES(s)
 
+    def get_region_sequence(self, region_id, region_start=None, region_end=None):
+        parsed_contig = _BYTES(region_id)
+        contig_str = self.ref_fasta[parsed_contig]
+        if region_start is None:
+            region_start = 0
+        if region_end is None:
+            region_end = len(contig_str)
+
+        return _STR(contig_str[region_start:region_end])
+
     def _parse_cigar(self, cigar_str, read_str, ctg_str, ctg_pos):
         #ctg_str = self.ref_fasta[ctg_name]
         trg_seq = []

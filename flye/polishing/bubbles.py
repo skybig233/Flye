@@ -66,21 +66,24 @@ def _thread_worker(aln_reader, chunk_feeder, contigs_info, err_mode,
             ctg_id = ctg_region.ctg_id
             if len(ctg_aln) == 0:
                 continue
+            ref_seq = aln_reader.get_region_sequence(ctg_region.ctg_id, ctg_region.start,
+                                                     ctg_region.end)
 
-            #since we are working with contig chunks
+            #since we are working with contig chunks, tranform alignment coorinates
             ctg_aln = aln_reader.trim_and_transpose(ctg_aln, ctg_region.start, ctg_region.end)
 
             ctg_aln = get_uniform_alignments(ctg_aln)
-            profile, aln_errors = _compute_profile(ctg_aln, err_mode)
+            profile, aln_errors = _compute_profile(ctg_aln, ref_seq)
             partition, num_long_bubbles = _get_partition(profile, err_mode)
-            ctg_bubbles = _get_bubble_seqs(ctg_aln, err_mode, profile, partition, ctg_id)
+            ctg_bubbles = _get_bubble_seqs(ctg_aln, profile, partition, ctg_id)
 
             mean_cov = aln_reader.get_median_depth(ctg_region.ctg_id, ctg_region.start,
                                                    ctg_region.end)
 
             ctg_bubbles, num_empty = _postprocess_bubbles(ctg_bubbles)
             ctg_bubbles, num_long_branch = _split_long_bubbles(ctg_bubbles)
-            #num_long_branch = 0
+
+            #transform coordinates back
             for b in ctg_bubbles:
                 b.position += ctg_region.start
 
@@ -307,7 +310,7 @@ def _is_simple_kmer(profile, position):
     return True
 
 
-def _compute_profile(alignment, platform):
+def _compute_profile(alignment, ref_sequence):
     """
     Computes alignment profile
     """
@@ -320,6 +323,9 @@ def _compute_profile(alignment, platform):
     aln_errors = []
     #filtered = 0
     profile = [ProfileInfo() for _ in range(genome_len)]
+
+    for i in range(genome_len):
+        profile[i].nucl = ref_sequence[i]
 
     for aln in alignment:
         #if aln.err_rate > max_aln_err or len(aln.qry_seq) < min_aln_len:
@@ -343,7 +349,7 @@ def _compute_profile(alignment, platform):
             if trg_nuc == "-":
                 prof_elem.num_inserts += 1
             else:
-                prof_elem.nucl = trg_nuc
+                #prof_elem.nucl = trg_nuc
                 prof_elem.coverage += 1
 
                 if qry_nuc == "-":
@@ -402,7 +408,7 @@ def _get_partition(profile, err_mode):
     return partition, long_bubbles
 
 
-def _get_bubble_seqs(alignment, platform, profile, partition, contig_id):
+def _get_bubble_seqs(alignment, profile, partition, contig_id):
     """
     Given genome landmarks, forms bubble sequences
     """
