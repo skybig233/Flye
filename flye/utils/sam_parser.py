@@ -273,8 +273,10 @@ class SynchronizedSamReader(object):
         qry_start += soft_clipped_left
         qry_end -= soft_clipped_right
 
+        total_clipped = soft_clipped_left + soft_clipped_right + hard_clipped_left + hard_clipped_right
+
         return (trg_start, trg_end, len(ctg_str), trg_seq,
-                qry_start, qry_end, qry_len, qry_seq, err_rate)
+                qry_start, qry_end, qry_len, qry_seq, err_rate, total_clipped)
 
     def trim_and_transpose(_self, alignmens, region_start, region_end):
         """
@@ -405,8 +407,22 @@ class SynchronizedSamReader(object):
                 #raise Exception("Error parsing SAM: record without read sequence")
 
             (trg_start, trg_end, trg_len, trg_seq,
-            qry_start, qry_end, qry_len, qry_seq, err_rate) = \
+            qry_start, qry_end, qry_len, qry_seq, err_rate, total_clipped) = \
                     self._parse_cigar(cigar_str, read_str, contig_str, ctg_pos)
+
+            div_tag = 0
+            tags = tokens[11:]
+            for t in tags:
+                if t.startswith(b"de"):
+                    div_tag = float(t[5:])
+
+            #####
+            if total_clipped > 2000:
+                continue
+            if qry_end - qry_start < 10000:
+                continue
+            if div_tag > 0.1:
+                continue
 
             #OVERHANG = cfg.vals["read_aln_overhang"]
             #if (float(qry_end - qry_start) / qry_len > self.min_aln_rate or
