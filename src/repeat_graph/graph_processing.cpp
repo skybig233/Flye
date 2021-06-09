@@ -8,6 +8,8 @@
 #include "../common/logger.h"
 #include "../common/config.h"
 #include "../common/utils.h"
+// 江喆圣debug记录：添加outgen
+#include "../repeat_graph/output_generator.h"
 
 //a helper function that calls
 //all other simplification procedures
@@ -338,9 +340,15 @@ std::vector<UnbranchingPath> GraphProcessor::getUnbranchingPaths() const
 	
 	std::vector<UnbranchingPath> unbranchingPaths;
 	std::unordered_set<GraphEdge*> visitedEdges;
+//	江喆圣debug记录：每次调用输出graph.gv样例
+//    SequenceContainer seqReads;
+//    ReadAligner aligner(_graph, seqReads);
+//    OutputGenerator outGen(_graph, aligner);
+//    outGen.outputDot(this->getEdgesPaths(),"./getUnbranchingPaths.gv");
+//
 	for (auto edge : _graph.iterEdges())
 	{
-		if (visitedEdges.count(edge)) continue;
+		if (visitedEdges.count(edge)) continue;//防止相同edge在visitedEdges出现多次
 		visitedEdges.insert(edge);
 
 		GraphPath traversed;

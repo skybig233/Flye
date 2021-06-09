@@ -9,7 +9,7 @@ profile: CXXFLAGS += -pg
 profile: LDFLAGS += -pg
 profile: release
 
-release: CXXFLAGS += -O3 -DNDEBUG
+release: CXXFLAGS += -O0 -DNDEBUG
 release: flye-modules
 
 SANITIZE_FLAGS += -D_GLIBCXX_SANITIZE_VECTOR -U_FORTIFY_SOURCE -fsanitize=address -fno-omit-frame-pointer -fsanitize=undefined

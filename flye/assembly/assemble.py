@@ -42,6 +42,13 @@ def assemble(args, run_params, out_file, log_file, config_path):
     logger.debug("-----Begin assembly log------")
     cmdline = [ASSEMBLE_BIN, "assemble", "--reads", ",".join(args.reads), "--out-asm", out_file,
                "--config", config_path, "--log", log_file, "--threads", str(args.threads)]
+    # 2020/12/15 江喆圣：
+    # 测试用例基础cmdline如下
+    # ['flye-modules', 'assemble', '--reads',
+    #  '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/software/Flye/flye/tests/data/ecoli_500kb_reads_hifi.fastq.gz', '--out-asm',
+    #  '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/test_toy/00-assembly/draft_assembly.fasta', '--config',
+    #  '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/software/Flye/flye/config/bin_cfg/asm_corrected_reads.cfg', '--log',
+    #  '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/test_toy/flye.log', '--threads', '8']
     if args.debug:
         cmdline.append("--debug")
     if args.meta:
@@ -66,6 +73,14 @@ def assemble(args, run_params, out_file, log_file, config_path):
 
     try:
         logger.debug("Running: " + " ".join(cmdline))
+        # 2020/12/15 江喆圣：
+        # 传入C++的cmdline如下：
+        # ['flye-modules', 'assemble',
+        #  '--reads','/ldfssz1/ST_OCEAN/USER/jiangzhesheng/software/Flye/flye/tests/data/ecoli_500kb_reads_hifi.fastq.gz',
+        #  '--out-asm', '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/test_toy/00-assembly/draft_assembly.fasta',
+        #  '--config','/ldfssz1/ST_OCEAN/USER/jiangzhesheng/software/Flye/flye/config/bin_cfg/asm_corrected_reads.cfg',
+        #  '--log','/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/test_toy/flye.log',
+        #  '--threads', '8', '--genome-size', '500000','--min-ovlp', '1000']
         subprocess.check_call(cmdline)
     except subprocess.CalledProcessError as e:
         if e.returncode == -9:

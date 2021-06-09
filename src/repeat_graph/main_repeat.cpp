@@ -114,8 +114,11 @@ bool parseArgs(int argc, char** argv, std::string& readsFasta,
 			exit(0);
 		}
 	}
-	if (readsFasta.empty() || outFolder.empty() || 
+//	新增功能：没有read的时候只用disjointig输出repeatgraph，所以可以不用read
+    if (outFolder.empty() ||
 		inAssembly.empty() || configPath.empty())
+//	if (readsFasta.empty() || outFolder.empty() ||
+//		inAssembly.empty() || configPath.empty())
 	{
 		printUsage();
 		return false;
@@ -136,7 +139,8 @@ int repeat_main(int argc, char** argv)
 	int kmerSize = -1;
 	int minOverlap = 5000;
 	bool isMeta = false;
-	bool keepHaplotypes = false; 
+//	bool keepHaplotypes = false;
+	bool keepHaplotypes = true;
 	std::string readsFasta;
 	std::string inAssembly;
 	std::string outFolder;
@@ -175,7 +179,7 @@ int repeat_main(int argc, char** argv)
 
 	Logger::get().info() << "Parsing disjointigs";
 	SequenceContainer seqAssembly;
-	std::vector<std::string> readsList = splitString(readsFasta, ',');
+
 	try
 	{
 		seqAssembly.loadFromFile(inAssembly);
@@ -192,9 +196,25 @@ int repeat_main(int argc, char** argv)
 	RepeatGraph rg(seqAssembly, &edgeSequences);
 	rg.build();
 	//rg.validateGraph();
+	if (readsFasta.empty())
+    {
+		SequenceContainer seqReads;
+        GraphProcessor proc(rg, seqAssembly);
+		ReadAligner aligner(rg, seqReads);
+        OutputGenerator outGen(rg, aligner);
+        rg.updateEdgeSequences();
+        outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_simplify.gv");
+        outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_before_simplify.fasta");
+        rg.storeGraph(outFolder + "/repeat_graph_dump");
+		SequenceContainer::writeFasta(edgeSequences.iterSeqs(),
+								outFolder + "/repeat_graph_edges.fasta",
+								/*only pos strand*/ true);
+        return 0;
+    }
 
 	Logger::get().info() << "Parsing reads";
 	SequenceContainer seqReads;
+	std::vector<std::string> readsList = splitString(readsFasta, ',');
 	try
 	{
 		for (auto& readsFile : readsList) seqReads.loadFromFile(readsFile);
@@ -215,24 +235,31 @@ int repeat_main(int argc, char** argv)
 	aligner.alignReads();
 	MultiplicityInferer multInf(rg, aligner, seqAssembly);
 	multInf.estimateCoverage();
-	//aligner.storeAlignments(outFolder + "/read_alignment_before_rr");
+//	江喆圣：
+//	这里注释掉了简化repeat graph之前read比对到图上的信息
+	aligner.storeAlignments(outFolder + "/read_alignment_before_rr");
+//	江喆圣：这里添加了代码查看简化repeat graph之前的情况
+	RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
+	HaplotypeResolver hapResolver(rg, aligner, seqAssembly, seqReads);
+	GraphProcessor proc(rg, seqAssembly);
+	OutputGenerator outGen(rg, aligner);
+    outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_simplify.gv");
+	outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_simplify.gfa");
+	outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_before_simplify.fasta");
 
 	Logger::get().info() << "Simplifying the graph";
 
 	multInf.removeUnsupportedEdges(/*only tips*/ true);
 	//multInf.removeUnsupportedConnections();
 	//rg.validateGraph();
-	
-	RepeatResolver repResolver(rg, seqAssembly, seqReads, aligner, multInf);
-	HaplotypeResolver hapResolver(rg, aligner, seqAssembly, seqReads);
-	GraphProcessor proc(rg, seqAssembly);
-	OutputGenerator outGen(rg, aligner);
 
 	//dump graph before first repeat resolution iteration
 	repResolver.findRepeats();
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gv");
-	//outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gfa");
+//	江喆圣：这里注释掉了gfa文件
+	outGen.outputGfa(proc.getEdgesPaths(), outFolder + "/graph_before_rr.gfa");
 	outGen.outputFasta(proc.getEdgesPaths(), outFolder + "/graph_before_rr.fasta");
+	rg.storeGraph(outFolder + "/repeat_graph_dump_before_rr");//解repeat之前的graph
 
 	if (isMeta) 
 	{
@@ -285,7 +312,7 @@ int repeat_main(int argc, char** argv)
 	//rg.validateGraph();
 
 	outGen.outputDot(proc.getEdgesPaths(), outFolder + "/graph_after_rr.gv");
-	rg.storeGraph(outFolder + "/repeat_graph_dump");
+	rg.storeGraph(outFolder + "/repeat_graph_dump_after_rr");//解repeat之后的graph
 	aligner.storeAlignments(outFolder + "/read_alignment_dump");
 	SequenceContainer::writeFasta(edgeSequences.iterSeqs(), 
 								  outFolder + "/repeat_graph_edges.fasta",

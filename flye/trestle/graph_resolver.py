@@ -21,7 +21,7 @@ logger = logging.getLogger()
 
 class Connection(object):
     __slots__ = ("id", "path", "sequence")
-    def __init__(self, id=None, path=None, sequence=""):
+    def __init__(self, id:str=None, path=None, sequence=""):
         self.id = id
         self.path = path
         self.sequence = sequence
@@ -215,7 +215,7 @@ def _get_connections(trestle_results):
                              connection_1, connection_2)
 
                 new_seq_id = "trestle_resolved_" + str(repeat_id) + "_copy_"
-                connections.extend([Connection(new_seq_id + "1", connection_1, seq_1),
-                                    Connection(new_seq_id + "2", connection_2, seq_2)])
+                connections.extend([Connection(id=new_seq_id + "1", path=connection_1, sequence=seq_1),
+                                    Connection(id=new_seq_id + "2", path=connection_2, sequence=seq_2)])
 
     return connections

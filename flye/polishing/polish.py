@@ -39,7 +39,8 @@ def check_binaries():
                               "Did you run 'make'?")
     try:
         devnull = open(os.devnull, "w")
-        subprocess.check_call([POLISH_BIN, "polisher", "-h"], stderr=devnull)
+        # subprocess.check_call([POLISH_BIN, "polisher", "-h"], stderr=devnull)
+        subprocess.check_call([POLISH_BIN, "polisher", "-h"], stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         if e.returncode == -9:
             logger.error("Looks like the system ran out of memory")
