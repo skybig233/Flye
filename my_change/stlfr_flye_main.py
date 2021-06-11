@@ -7,7 +7,6 @@ import sys
 import argparse
 import logging
 
-
 from my_change import subgraph
 from flye.repeat_graph.repeat_graph import *
 from my_change import solve_repeat
@@ -23,9 +22,10 @@ def chech_flye(flye_dir: str,logger):
     :return:repeat_graph和edges_fasta路径
     """
     edge_file=os.path.join(flye_dir,'repeat_graph_edges.fasta')
-    repeat_graph=os.path.join(flye_dir,'repeat_graph_dump_after_rr')
-    if not os.path.isfile(edge_file) and os.path.isfile(repeat_graph):
+    repeat_graph=os.path.join(flye_dir,'repeat_graph_dump')
+    if not (os.path.isfile(edge_file) and os.path.isfile(repeat_graph)):
         logger.error("flye_dir is incomplete")
+        sys.exit(1)
     return edge_file,repeat_graph
 
 def aln_stlfr_flye(read1, read2, ref,
@@ -130,6 +130,7 @@ def stlfr_flye_main(read1:str, read2:str, flye_dir:str,
     :param bam:bam文件路径
     :return:
     """
+
     edge_file,graph=chech_flye(flye_dir,logger)
     if not bam:
         os.environ["PATH"]=os.environ["PATH"]+os.pathsep+BWA+os.pathsep+SAMTOOLS
@@ -146,9 +147,11 @@ def stlfr_flye_main(read1:str, read2:str, flye_dir:str,
 
     for i in range(0,len(subgs),2):#间隔为2是因为两个子图结构是一模一样的，只是edge_id取了反，解其中一个另一个自动解决
         logger.info("processing subg%d"%i)
+        subgdir=os.path.join(outputdir,'subg%d'%i)
+        os.mkdir(subgdir)
         subg=subgs[i]
         repeat_graph=solve_repeat.solve_repeat_main(subgraph=subg, bamfile=bam, origraph=repeat_graph,
-                                                    outputdir=outputdir,logger=logger)
+                                                    outputdir=subgdir,logger=logger)
 
     repeat_graph.output_all(outdir=outputdir)
 

@@ -9,24 +9,10 @@ from flye.main import JobContigger,JobPolishing,JobFinalize,JobConfigure
 import os
 import argparse
 import flye.config.py_cfg as cfg
+
 FLYE="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/debug/bin/"
 
 def contigger_and_polish(args):
-    # new_edges="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/repeat_graph_edges.fasta"
-    # new_graph="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/repeat_graph_dump"
-    # new_out="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/30-contigger"
-    # new_log="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/flye.log"
-    # cmd=[FLYE+"flye-modules","contigger",
-    #      "--graph-edges",new_edges,
-    #      "--reads","/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/data/human/chr19.lr.fa",
-    #      "--out-dir",new_out,
-    #      "--config","/ldfssz1/ST_OCEAN/USER/jiangzhesheng/software/anaconda3/lib/python3.7/site-packages/flye/config/bin_cfg/asm_raw_reads.cfg",
-    #      "--repeat-graph",new_graph,
-    #      "--graph-aln","/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/real_data_run/human/pb_ccs_chr19/20-repeat/read_alignment_dump",
-    #      "--log",new_log,
-    #      "--threads","8","--min-ovlp","5000"]
-    # pp=subprocess.Popen(cmd)
-    # pp.wait()
 
     work_dir=args.out_dir
     log_file=args.log_file
@@ -35,9 +21,10 @@ def contigger_and_polish(args):
     jobconfig.run()
 
     #Contigger
-    repeat_graph_edges="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/repeat_graph_edges.fasta"
-    repeat_graph="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/solve_only/repeat_graph_dump"
-    reads_alignment="/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/real_data_run/human/pb_ccs_chr19/20-repeat/read_alignment_dump"
+    repeat_graph_edges=args.repeat_graph_edges
+    repeat_graph=args.repeat_graph
+    reads_alignment=args.reads_alignment
+
     jobcontig=JobContigger(args, work_dir, log_file, repeat_graph_edges,
                              repeat_graph, reads_alignment)
     raw_contigs = jobcontig.out_files["contigs"]
@@ -151,6 +138,11 @@ def main():
     parser.add_argument("--debug", action="store_true",
                         dest="debug", default=False,
                         help="enable debug output")
+
+    # 对接参数
+    parser.add_argument("--repeat_graph",required=True)
+    parser.add_argument("--repeat_graph_edges",required=True)
+    parser.add_argument("--reads_alignment",required=True)
 
     args = parser.parse_args()
 

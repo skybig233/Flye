@@ -35,6 +35,12 @@ class Path:
     def is_end_in_repeat(self):
         return self.edges[-1].repetitive
 
+    def have_repeat(self):
+        for i in self.edges:
+            if i.repetitive==True:
+                return True
+        return False
+
 def get_candidate_paths(subg:RepeatGraph, start_edge:RgEdge, max_extend_length:int)->List[Path]:
     """
     给定子图，起始边，最大延伸长度，返回所有候选路径
@@ -121,9 +127,10 @@ def paths_chooser(paths: List[Path],topk:int)->List[Path]:
     #         max_barcodes=len(path.barcodes)
     #         best_path=path
     # return best_path
+    qualified_paths=[i for i in paths if i.have_repeat()==True]
     max_barcodes=100
-    qualified_paths=paths[:topk]
     qualified_paths=[i for i in qualified_paths if len(i.barcodes)>max_barcodes]
+    qualified_paths=qualified_paths[:topk]
     return qualified_paths
 
 def analyse_path(path:Path)->List[List[Dict[str, List[int]]]]:
@@ -160,14 +167,16 @@ def seq_splitter(path:Path,path_info)->List[str]:
     repeat_seq=[]
     for edge_index in range(1,len(path)-1):
         assert path.edges[edge_index].repetitive==True
-        for seq_index in range(len(path_info[edge_index])):
-            max_barcode=0
+        max_barcode=0#用于存储当前最大barcode数目
+        choose_seq_index=0
+        for seq_index in range(len(path_info[edge_index])):#遍历每个seq，如果support_barcode大于当前最大，更新当前最大，并记录seq下标
             if len(path_info[edge_index][seq_index]) > max_barcode:
                 choose_seq_index=seq_index
+                max_barcode=len(path_info[edge_index][seq_index])
 
         support_barcode_proportion=len(path_info[edge_index][choose_seq_index])/len(path.barcodes)
         if support_barcode_proportion > 0.8:
-            choose_seq=path.edges[edge_index].edge_sequences[seq_index].edge_seq_name
+            choose_seq=path.edges[edge_index].edge_sequences[choose_seq_index].edge_seq_name
             repeat_seq.append(choose_seq)
     return repeat_seq
 
@@ -186,7 +195,7 @@ def seq_seq_generator(repeat_seq:List[str],subg:RepeatGraph)->str:
             ans.append(subg.edges_fasta[i])
     return ''.join(ans)
 
-def updategraph(path:Path, rg:RepeatGraph):
+def updategraph(path:Path, rg:RepeatGraph,logger):
     """
     采用separate_path方法更新repeat_graph
     :param path:
@@ -200,19 +209,15 @@ def updategraph(path:Path, rg:RepeatGraph):
     path_info=analyse_path(path=path)
 
     repeat_seq=seq_splitter(path=path,path_info=path_info)
-
+    assert repeat_seq!=[]
     path_id=[edge.edge_id for edge in path.edges]
     new_seq_id="barcode_solved_repeat_%s_%s"%(str(path.edges[0].edge_id),str(path.edges[-1].edge_id))
     new_seq_seq=seq_seq_generator(repeat_seq=repeat_seq, subg=rg)
+    assert new_seq_seq!=""
+    if repeat_seq==[] or new_seq_seq=="":
+        logger.warning("cannot choose good seq for path %s"%str(path))
+        return rg
     rg.separate_path(graph_path=path_id, new_seq_id=new_seq_id, new_seq_seq=new_seq_seq)
-
-    # edges_to_remove = set()
-    # edges_to_remove.update(path_id[1:-1])
-    # for edge_id in edges_to_remove:
-    #     edge = rg.edges[edge_id]
-    #     if not edge.self_complement:
-    #         rg.remove_edge(rg.complement_edge(edge))
-    #     rg.remove_edge(edge)
 
     return rg
 
@@ -222,29 +227,46 @@ def solve_mini_subg(paths,subg,origraph,logger):
     paths.sort(key=lambda x:len(x.barcodes),reverse=True)
     in_egdes=[i for i in subg.edges.values() if subgraph.get_inedges(subg=subg,edge=i)==[]]
     topk=len(in_egdes)
-    good_paths=paths_chooser(paths=paths,topk=topk)
-    logger.info("good paths choosed: %s"%str([str(path) for path in good_paths]))
+    good_paths = paths_chooser(paths=paths, topk=topk)
+    logger.info("%d good paths choosed: %s" % (len(good_paths),str([str(path) for path in good_paths])))
+    good_paths=conflict_paths_resolver(good_paths,logger)
+    logger.info("%d good paths with no conflict: %s" % (len(good_paths), str([str(path) for path in good_paths])))
+
+    edges_to_remove = set()
     for path in good_paths:
         #path最终不落入repeat中才更新子图
         if path!=[] and path.edges[-1].repetitive==False:
-            updategraph(path=path, rg=origraph)
+            path_id=[i.edge_id for i in path.edges]
+            edges_to_remove.update(path_id[1:-1])
+            updategraph(path=path, rg=origraph,logger=logger)
 
-def conflict_paths_resolver(paths:List[Path]):
-    pass
+    # for edge_id in edges_to_remove:
+    #     try:
+    #         edge = origraph.edges[edge_id]
+    #         if not edge.self_complement:
+    #             origraph.remove_edge(origraph.complement_edge(edge))
+    #         origraph.remove_edge(edge)
+    #     except KeyError:continue
+
+
+def conflict_paths_resolver(paths:List[Path],logger):
+    new_paths=[]
+    visited_unique=set()
+    for path in paths:
+        if not ((path.edges[0].edge_id in visited_unique)
+                and (path.edges[-1].edge_id in visited_unique)
+                and (path.edges[-1].repetitive==False)):
+            new_paths.append(path)
+
+            visited_unique.add(path.edges[0].edge_id)
+            visited_unique.add(path.edges[-1].edge_id)
+        else:
+            logger.info("conflict paths %s"%str(path))
+    return new_paths
 
 def solve_big_subg(paths,subg,origraph,logger):
     # TODO 添加大图处理
-    for path in paths:
-        path.set_barcodes()
-    paths.sort(key=lambda x: len(x.barcodes), reverse=True)
-    in_egdes = [i for i in subg.edges.values() if subgraph.get_inedges(subg=subg, edge=i) == []]
-    topk = len(in_egdes)
-    good_paths = paths_chooser(paths=paths, topk=topk)
-    logger.info("%d good paths choosed: %s" % (len(good_paths),str([str(path) for path in good_paths])))
-    for path in good_paths:
-        # path最终不落入repeat中才更新子图
-        if path != [] and path.edges[-1].repetitive == False:
-            updategraph(path=path, rg=origraph)
+    solve_mini_subg(paths,subg,origraph,logger)
 
 def solve_repeat_main(subgraph:RepeatGraph, bamfile:str,
                       outputdir:str, origraph:RepeatGraph,
@@ -275,7 +297,6 @@ def solve_repeat_main(subgraph:RepeatGraph, bamfile:str,
     else:
         solve_big_subg(subg=subgraph,paths=paths,origraph=origraph,logger=logger)
     return origraph
-
 
 def main(argv):
     workdir = '/ldfssz1/ST_OCEAN/USER/jiangzhesheng/flye/step_by_step'
